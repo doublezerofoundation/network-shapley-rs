@@ -1,0 +1,10 @@
+"Start","End","Traffic","Type"
+"SIN","AMS",7.3,1
+"SIN","BAR",0.01,1
+"SIN","FRA",3.83,1
+"SIN","LAX",1.66,1
+"SIN","LON",4.65,1
+"SIN","NYC",1.79,1
+"SIN","SEO",0.09,1
+"SIN","TYO",2.45,1
+"LAX","SIN",5,2

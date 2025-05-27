@@ -1,0 +1,40 @@
+[package]
+name = "shapley"
+version = "0.1.0"
+edition = "2024"
+
+[[example]]
+name = "simple"
+[[example]]
+name = "csv"
+
+[dependencies]
+clarabel = "0"
+faer = "0"
+itertools = "0"
+ndarray = "0"
+rand = "0"
+rayon = "1"
+rust_decimal = { version = "1", features = [ "macros", "serde-with-str" ] }
+rust_decimal_macros = "1"
+thiserror = "2"
+
+# Optional dependencies for CSV support
+csv = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+csv = ["dep:csv", "dep:serde"]
+
+[dev-dependencies]
+csv = "1"
+serde = { version = "1", features = ["derive"] }
+criterion = { version = "0", features = [ "html_reports" ] }
+
+[[bench]]
+name = "shapley_bench"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1

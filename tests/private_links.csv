@@ -1,0 +1,13 @@
+"Start","End","Cost","Bandwidth","Operator1","Operator2","Uptime","Shared"
+"LON1","AMS1",1.45,10,"Alpha",NA,1,NA
+"LON1","FRA1",4.96,10,"Alpha",NA,1,NA
+"FRA1","AMS1",2.11,10,"Alpha",NA,1,NA
+"LON1","NYC2",45.6,10,"Beta",NA,1,NA
+"LAX2","NYC1",25.72,10,"Delta",NA,1,NA
+"NYC1","NYC2",0.1,10,"Epsilon",NA,1,NA
+"FRA1","SIN1",52.42,10,"Gamma",NA,1,NA
+"SIN1","TYO1",44.95,10,"Kappa",NA,1,NA
+"SEO1","TYO1",4.5,10,"Kappa",NA,1,NA
+"LAX1","SIN1",121.56,10,"Theta",NA,1,NA
+"LAX1","TYO1",57.62,10,"Theta",NA,1,NA
+"BAR1","NYC3",55.32,10,"Zeta",NA,1,NA
