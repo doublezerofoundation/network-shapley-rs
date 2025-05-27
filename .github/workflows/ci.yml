@@ -15,7 +15,7 @@ jobs:
         uses: styfle/cancel-workflow-action@0.12.1
 
       - name: Setup | Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup | Apt packages
         run: sudo apt-get update
@@ -29,8 +29,11 @@ jobs:
       - name: Setup | Rust cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Setup | Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Setup | Just
-        uses: extractions/setup-just@v3
+        uses: taiki-e/install-action@just
 
       - name: Test | CI Pipeline
         run: just ci
