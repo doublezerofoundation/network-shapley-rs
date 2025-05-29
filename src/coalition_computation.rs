@@ -116,7 +116,8 @@ fn solve_coalition_values_sampled(
     size[0] = 0;
 
     let full_idx = n_coalitions - 1;
-    let (row_mask, col_mask) = get_coalition_masks(operators, primitives);
+    let ops_refs: Vec<&str> = operators.iter().map(|s| s.as_str()).collect();
+    let (row_mask, col_mask) = get_coalition_masks(&ops_refs, primitives);
     svalue[full_idx] =
         solve_single_coalition(primitives, &row_mask, &col_mask).unwrap_or(f64::NEG_INFINITY);
     size[full_idx] = n_ops;
@@ -144,7 +145,7 @@ fn solve_coalition_values_sampled(
             let n_samples = samples_per_size.min(coalitions.len());
 
             // Sample without replacement
-            let mut indices = coalitions.clone();
+            let mut indices: Vec<usize> = coalitions.to_vec();
             indices.sort_unstable();
 
             (0..n_samples)
@@ -228,131 +229,39 @@ pub fn compute_expected_values(
         .map(|&s| operator_uptime.powi(s as i32))
         .collect();
 
-    // Element-wise multiply base_p with submask rows
-    let mut bp_masked = Array2::zeros((n_coal, n_coal));
-    for i in 0..n_coal {
-        for j in 0..n_coal {
-            bp_masked[[i, j]] = base_p[j] * submask[[i, j]];
-        }
-    }
+    // Element-wise multiply base_p with submask rows using broadcasting
+    // bp_masked[i,j] = base_p[j] * submask[i,j]
+    let base_p_broadcast = base_p.view().insert_axis(ndarray::Axis(0));
+    let bp_masked = &base_p_broadcast * &submask;
 
     // Compute expected values using matrix operations matching Python exactly
     // Build coefficient matrix
     let coef = build_coefficient_matrix(n_ops)?;
     let coef_dense = coef.to_dense();
 
-    // For large coalition counts, use parallel processing
-    let use_parallel_matrix = n_coal > 32;
-    let mut evalue = Array1::zeros(n_coal);
-
-    if use_parallel_matrix {
-        // Parallel version for large matrices
-        // Compute term = bp_masked @ (coef_dense * submask)
-        // First compute coef_dense * submask (element-wise)
-        let coef_times_submask: Vec<f64> = (0..n_coal * n_coal)
-            .into_par_iter()
-            .map(|idx| {
-                let i = idx / n_coal;
-                let j = idx % n_coal;
-                coef_dense[(i, j)] * submask[(i, j)]
-            })
-            .collect();
-
-        let mut coef_times_submask_arr = Array2::zeros((n_coal, n_coal));
-        for (idx, &val) in coef_times_submask.iter().enumerate() {
-            let i = idx / n_coal;
-            let j = idx % n_coal;
-            coef_times_submask_arr[[i, j]] = val;
-        }
-
-        // Matrix multiplication bp_masked @ coef_times_submask
-        let term: Vec<f64> = (0..n_coal * n_coal)
-            .into_par_iter()
-            .map(|idx| {
-                let i = idx / n_coal;
-                let j = idx % n_coal;
-                let mut sum = 0.0;
-                for k in 0..n_coal {
-                    sum += bp_masked[[i, k]] * coef_times_submask_arr[[k, j]];
-                }
-                sum
-            })
-            .collect();
-
-        let mut term_arr = Array2::zeros((n_coal, n_coal));
-        for (idx, &val) in term.iter().enumerate() {
-            let i = idx / n_coal;
-            let j = idx % n_coal;
-            term_arr[[i, j]] = val;
-        }
-
-        // Compute part = (bp_masked + term) * submask in parallel
-        let part: Vec<f64> = (0..n_coal * n_coal)
-            .into_par_iter()
-            .map(|idx| {
-                let i = idx / n_coal;
-                let j = idx % n_coal;
-                (bp_masked[[i, j]] + term_arr[[i, j]]) * submask[[i, j]]
-            })
-            .collect();
-
-        let mut part_arr = Array2::zeros((n_coal, n_coal));
-        for (idx, &val) in part.iter().enumerate() {
-            let i = idx / n_coal;
-            let j = idx % n_coal;
-            part_arr[[i, j]] = val;
-        }
-
-        // Compute evalue = (svalue * part).sum(axis=1) in parallel
-        let evalue_vec: Vec<f64> = (0..n_coal)
-            .into_par_iter()
-            .map(|i| {
-                let mut sum = 0.0;
-                for j in 0..n_coal {
-                    sum += svalue[j] * part_arr[[i, j]];
-                }
-                sum
-            })
-            .collect();
-
-        for (i, &val) in evalue_vec.iter().enumerate() {
-            evalue[i] = val;
-        }
-    } else {
-        // Sequential version for small matrices
-        let mut coef_times_submask = Array2::zeros((n_coal, n_coal));
+    // Convert sparse coefficient matrix to dense ndarray
+    let coef_array = {
+        let mut arr = Array2::zeros((n_coal, n_coal));
         for i in 0..n_coal {
             for j in 0..n_coal {
-                coef_times_submask[(i, j)] = coef_dense[(i, j)] * submask[(i, j)];
+                arr[[i, j]] = coef_dense[(i, j)];
             }
         }
+        arr
+    };
 
-        let mut term = Array2::zeros((n_coal, n_coal));
-        for i in 0..n_coal {
-            for j in 0..n_coal {
-                let mut sum = 0.0;
-                for k in 0..n_coal {
-                    sum += bp_masked[[i, k]] * coef_times_submask[[k, j]];
-                }
-                term[[i, j]] = sum;
-            }
-        }
+    // Compute term = bp_masked @ (coef * submask) using ndarray operations
+    // First compute coef * submask (element-wise)
+    let coef_times_submask = &coef_array * &submask;
 
-        let mut part = Array2::zeros((n_coal, n_coal));
-        for i in 0..n_coal {
-            for j in 0..n_coal {
-                part[[i, j]] = (bp_masked[[i, j]] + term[[i, j]]) * submask[[i, j]];
-            }
-        }
+    // Matrix multiplication bp_masked @ coef_times_submask
+    let term = bp_masked.dot(&coef_times_submask);
 
-        for i in 0..n_coal {
-            let mut sum = 0.0;
-            for j in 0..n_coal {
-                sum += svalue[j] * part[[i, j]];
-            }
-            evalue[i] = sum;
-        }
-    }
+    // Compute part = (bp_masked + term) * submask
+    let part = (&bp_masked + &term) * &submask;
+
+    // Compute evalue = part.T @ svalue (or equivalently, svalue @ part along rows)
+    let mut evalue = part.dot(svalue);
 
     // Special case: empty coalition
     evalue[0] = svalue[0];
@@ -369,7 +278,10 @@ pub fn calculate_shapley_values(
 ) -> Result<Vec<ShapleyValue>> {
     let bitmap = generate_coalition_bitmap(n_ops);
     let mut shapley = Array1::zeros(n_ops);
-    let fact_n = factorial(n_ops);
+
+    // Pre-compute factorials up to n_ops
+    let factorials: Vec<f64> = (0..=n_ops).map(|i| factorial(i) as f64).collect();
+    let fact_n = factorials[n_ops];
 
     for (k, _op) in operators.iter().enumerate() {
         // Find coalitions with/without operator
@@ -379,12 +291,12 @@ pub fn calculate_shapley_values(
 
         let without_op: Vec<usize> = with_op.iter().map(|&i| i - (1 << k)).collect();
 
-        // Calculate weights
+        // Calculate weights using pre-computed factorials
         let weights: Array1<f64> = with_op
             .iter()
             .map(|&i| {
                 let s = size[i];
-                (factorial(s - 1) * factorial(n_ops - s)) as f64 / fact_n as f64
+                factorials[s - 1] * factorials[n_ops - s] / fact_n
             })
             .collect();
 
@@ -419,23 +331,27 @@ pub fn calculate_shapley_values(
 // Helper functions
 
 #[inline]
-fn get_coalition_subset(operators: &[String], bitmap: &Array2<u8>, idx: usize) -> Vec<String> {
+fn get_coalition_subset<'a>(
+    operators: &'a [String],
+    bitmap: &Array2<u8>,
+    idx: usize,
+) -> Vec<&'a str> {
     operators
         .iter()
         .enumerate()
         .filter_map(|(i, op)| match bitmap[[i, idx]] == 1 {
             false => None,
-            true => Some(op.clone()),
+            true => Some(op.as_str()),
         })
         .collect()
 }
 
-fn get_coalition_masks(subset: &[String], primitives: &LPPrimitives) -> (Vec<bool>, Vec<bool>) {
+fn get_coalition_masks(subset: &[&str], primitives: &LPPrimitives) -> (Vec<bool>, Vec<bool>) {
     // Include "0" for public operator
     let mut valid_ops: HashSet<&str> = HashSet::with_capacity(subset.len() + 1);
     valid_ops.insert("0");
-    for op in subset {
-        valid_ops.insert(op.as_str());
+    for &op in subset {
+        valid_ops.insert(op);
     }
 
     let row_mask: Vec<bool> = primitives
@@ -659,23 +575,15 @@ fn solve_single_coalition(
 }
 
 #[inline]
-fn build_submask(bitmap: &Array2<u8>, n_coal: usize) -> Array2<f64> {
+fn build_submask(_bitmap: &Array2<u8>, n_coal: usize) -> Array2<f64> {
     let mut submask = Array2::zeros((n_coal, n_coal));
 
     for i in 0..n_coal {
-        for j in 0..n_coal {
-            // Check if coalition j is subset of i (note: j and i are swapped compared to before)
-            // This matches Python's broadcasting: submask[i,j] = True if coalition j is subset of i
-            let mut is_subset = true;
-            for k in 0..bitmap.nrows() {
-                if bitmap[[k, j]] > bitmap[[k, i]] {
-                    is_subset = false;
-                    break;
-                }
-            }
-
-            // Lower triangle only (np.tri has 1s where i >= j)
-            if is_subset && i >= j {
+        for j in 0..=i {
+            // Only check lower triangle
+            // Check if coalition j is subset of i using bitmask
+            // j is subset of i if (j & i) == j
+            if (j & i) == j {
                 submask[[i, j]] = 1.0;
             }
         }

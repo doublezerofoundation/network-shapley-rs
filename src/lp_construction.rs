@@ -282,7 +282,10 @@ fn block_diagonal(matrices: &[SparseColMat<usize, f64>]) -> Result<SparseColMat<
     let total_rows: usize = matrices.iter().map(|m| m.nrows()).sum();
     let total_cols: usize = matrices.iter().map(|m| m.ncols()).sum();
 
-    let mut triplets = Vec::new();
+    // Pre-calculate total number of non-zeros for better memory allocation
+    let total_nnz: usize = matrices.iter().map(|m| m.triplet_iter().count()).sum();
+    let mut triplets = Vec::with_capacity(total_nnz);
+
     let mut row_offset = 0;
     let mut col_offset = 0;
 
@@ -312,7 +315,10 @@ fn horizontal_concat(matrices: &[SparseColMat<usize, f64>]) -> Result<SparseColM
     let n_rows = matrices[0].nrows();
     let total_cols: usize = matrices.iter().map(|m| m.ncols()).sum();
 
-    let mut triplets = Vec::new();
+    // Pre-calculate total number of non-zeros for better memory allocation
+    let total_nnz: usize = matrices.iter().map(|m| m.triplet_iter().count()).sum();
+    let mut triplets = Vec::with_capacity(total_nnz);
+
     let mut col_offset = 0;
 
     for mat in matrices {
@@ -337,17 +343,21 @@ fn select_columns(
     let n_rows = matrix.nrows();
     let n_cols = keep.len();
 
+    // Build a reverse mapping for O(1) column lookups
+    // Since keep is sorted, we can use binary search, but HashMap is simpler and fast enough
+    let col_map: HashMap<usize, usize> = keep
+        .iter()
+        .enumerate()
+        .map(|(new_idx, &old_idx)| (old_idx, new_idx))
+        .collect();
+
     // Collect all triplets from the selected columns
-    let mut all_triplets = Vec::new();
+    let mut all_triplets = Vec::with_capacity(matrix.triplet_iter().count());
 
     for triplet in matrix.triplet_iter() {
         let col = triplet.col.unbound();
-        if let Some(new_col_pos) = keep.iter().position(|&k| k == col) {
-            all_triplets.push(Triplet::new(
-                triplet.row.unbound(),
-                new_col_pos,
-                *triplet.val,
-            ));
+        if let Some(&new_col) = col_map.get(&col) {
+            all_triplets.push(Triplet::new(triplet.row.unbound(), new_col, *triplet.val));
         }
     }
 
