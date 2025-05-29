@@ -12,7 +12,6 @@ name = "csv"
 clarabel = "0"
 faer = "0"
 itertools = "0"
-ndarray = "0"
 rand = "0"
 rayon = "1"
 rust_decimal = { version = "1", features = [ "macros", "serde-with-str" ] }

@@ -232,7 +232,7 @@ mod tests {
         // Check that matrices have appropriate dimensions
         assert!(primitives.a_eq.nrows() > 0);
         assert!(primitives.a_eq.ncols() > 0);
-        assert_eq!(primitives.b_eq.len(), primitives.a_eq.nrows());
+        assert_eq!(primitives.b_eq.nrows(), primitives.a_eq.nrows());
 
         // Check operator indices
         assert!(!primitives.col_index1.is_empty());

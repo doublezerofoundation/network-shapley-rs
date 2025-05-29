@@ -1,5 +1,4 @@
-use faer::sparse::SparseColMat;
-use ndarray::Array1;
+use faer::{Col, sparse::SparseColMat};
 use rust_decimal::{
     Decimal,
     prelude::{FromPrimitive, ToPrimitive},
@@ -89,9 +88,9 @@ impl ShapleyValue {
 pub struct LPPrimitives {
     pub a_eq: SparseColMat<usize, f64>,
     pub a_ub: SparseColMat<usize, f64>,
-    pub b_eq: Array1<f64>,
-    pub b_ub: Array1<f64>,
-    pub cost: Array1<f64>,
+    pub b_eq: Col<f64>,
+    pub b_ub: Col<f64>,
+    pub cost: Col<f64>,
     pub row_index1: Vec<String>,
     pub row_index2: Vec<String>,
     pub col_index1: Vec<String>,

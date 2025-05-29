@@ -3,10 +3,9 @@ use crate::{
     types::{DemandMatrix, Link, Result, decimal_to_f64},
 };
 use faer::{
-    Unbind,
+    Col, Unbind,
     sparse::{SparseColMat, Triplet},
 };
-use ndarray::Array1;
 use std::collections::{HashMap, HashSet};
 
 /// Build mapping from node names to indices
@@ -37,7 +36,7 @@ pub fn build_node_index(link_map: &[Link], demand: &DemandMatrix) -> HashMap<Str
 }
 
 /// Result type for flow constraints
-pub type FlowConstraints = (SparseColMat<usize, f64>, Array1<f64>, Vec<usize>);
+pub type FlowConstraints = (SparseColMat<usize, f64>, Col<f64>, Vec<usize>);
 
 /// Build flow conservation constraint matrix and demand vector
 pub fn build_flow_constraints(
@@ -78,7 +77,7 @@ pub fn build_bandwidth_constraints(
     n_private: usize,
     commodities: &[usize],
     keep: &[usize],
-) -> Result<(SparseColMat<usize, f64>, Array1<f64>)> {
+) -> Result<(SparseColMat<usize, f64>, Col<f64>)> {
     // Get shared IDs for private links
     let shared_ids: Vec<usize> = link_map[..n_private]
         .iter()
@@ -90,7 +89,7 @@ pub fn build_bandwidth_constraints(
             SparseColMat::try_new_from_triplets(0, 0, &[]).map_err(|_| {
                 ShapleyError::ComputationError("Failed to create sparse matrix".to_string())
             })?,
-            Array1::zeros(0),
+            Col::zeros(0),
         ));
     }
 
@@ -129,7 +128,7 @@ pub fn build_bandwidth_constraints(
         capacities.push(shared_bandwidth.get(&shared).copied().unwrap_or(0.0));
     }
 
-    let b_ub = Array1::from_vec(capacities);
+    let b_ub = Col::from_iter(capacities);
 
     Ok((a_ub, b_ub))
 }
@@ -191,14 +190,14 @@ pub fn build_objective_coefficients(
     link_map: &[Link],
     commodities: &[usize],
     keep: &[usize],
-) -> Array1<f64> {
+) -> Col<f64> {
     let all_costs: Vec<f64> = commodities
         .iter()
         .flat_map(|_| link_map.iter().map(|l| decimal_to_f64(l.cost)))
         .collect();
 
     let costs: Vec<f64> = keep.iter().map(|&i| all_costs[i]).collect();
-    Array1::from_vec(costs)
+    Col::from_iter(costs)
 }
 
 // Helper functions
@@ -246,12 +245,12 @@ fn build_demand_vector(
     demand: &DemandMatrix,
     node_idx: &HashMap<String, usize>,
     commodities: &[usize],
-) -> Result<Array1<f64>> {
+) -> Result<Col<f64>> {
     let n_nodes = node_idx.len();
     let mut b_flows = Vec::new();
 
     for &t in commodities {
-        let mut vec = Array1::zeros(n_nodes);
+        let mut vec = Col::<f64>::zeros(n_nodes);
 
         for d in demand.demands.iter().filter(|d| d.demand_type == t) {
             let start_idx = node_idx.get(&d.start).ok_or_else(|| {
@@ -266,10 +265,10 @@ fn build_demand_vector(
             vec[*end_idx] -= traffic;
         }
 
-        b_flows.extend(vec.iter());
+        b_flows.extend(vec.as_ref().iter().copied());
     }
 
-    Ok(Array1::from_vec(b_flows))
+    Ok(Col::from_iter(b_flows))
 }
 
 fn block_diagonal(matrices: &[SparseColMat<usize, f64>]) -> Result<SparseColMat<usize, f64>> {
@@ -458,7 +457,7 @@ mod tests {
         assert_eq!(a_ub.ncols(), 3); // 3 links
 
         // Check capacities
-        assert_eq!(b_ub.len(), 2);
+        assert_eq!(b_ub.nrows(), 2);
         assert_eq!(b_ub[0], 100.0);
         assert_eq!(b_ub[1], 50.0);
     }
@@ -523,7 +522,7 @@ mod tests {
 
         let costs = build_objective_coefficients(&links, &commodities, &keep);
 
-        assert_eq!(costs.len(), 4);
+        assert_eq!(costs.nrows(), 4);
         assert_eq!(costs[0], 10.0);
         assert_eq!(costs[1], 20.0);
         assert_eq!(costs[2], 10.0); // Second commodity

@@ -2,10 +2,9 @@ use crate::types::{LPPrimitives, Link, Result, ShapleyValue, f64_to_decimal, rou
 use clarabel::algebra::*;
 use clarabel::solver::{DefaultSettingsBuilder, DefaultSolver, IPSolver, SolverStatus};
 use faer::{
-    Par, Unbind,
+    Col, Mat, Par, Unbind,
     sparse::{SparseColMat, Triplet},
 };
-use ndarray::{Array1, Array2};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
@@ -30,14 +29,14 @@ pub fn enumerate_operators(private_links: &[Link]) -> Vec<String> {
 }
 
 /// Generate bitmap for all possible coalitions
-pub fn generate_coalition_bitmap(n_operators: usize) -> Array2<u8> {
+pub fn generate_coalition_bitmap(n_operators: usize) -> Mat<u8> {
     let n_coalitions = 1 << n_operators; // 2^n_operators
-    let mut bitmap = Array2::zeros((n_operators, n_coalitions));
+    let mut bitmap = Mat::from_fn(n_operators, n_coalitions, |_, _| 0u8);
 
     for col in 0..n_coalitions {
         for row in 0..n_operators {
             if (col >> row) & 1 == 1 {
-                bitmap[[row, col]] = 1;
+                bitmap[(row, col)] = 1;
             }
         }
     }
@@ -48,12 +47,12 @@ pub fn generate_coalition_bitmap(n_operators: usize) -> Array2<u8> {
 /// Solve linear program for each coalition to get optimal values
 pub fn solve_coalition_values(
     operators: &[String],
-    bitmap: &Array2<u8>,
+    bitmap: &Mat<u8>,
     primitives: &LPPrimitives,
-) -> Result<(Array1<f64>, Array1<usize>)> {
+) -> Result<(Col<f64>, Col<usize>)> {
     let n_coalitions = bitmap.ncols();
-    let mut svalue = Array1::from_elem(n_coalitions, f64::NEG_INFINITY);
-    let mut size = Array1::zeros(n_coalitions);
+    let mut svalue = Col::full(n_coalitions, f64::NEG_INFINITY);
+    let mut size = Col::from_fn(n_coalitions, |_| 0usize);
 
     // For very large problems (10+ operators), use sampling
     if operators.len() >= 10 {
@@ -103,10 +102,10 @@ pub fn solve_coalition_values(
 /// Sampling-based approach for very large coalition counts (10+ operators)
 fn solve_coalition_values_sampled(
     operators: &[String],
-    bitmap: &Array2<u8>,
+    bitmap: &Mat<u8>,
     primitives: &LPPrimitives,
-    svalue: &mut Array1<f64>,
-    size: &mut Array1<usize>,
+    svalue: &mut Col<f64>,
+    size: &mut Col<usize>,
 ) -> Result<()> {
     let n_ops = operators.len();
     let n_coalitions = bitmap.ncols();
@@ -132,7 +131,7 @@ fn solve_coalition_values_sampled(
     // Group coalitions by size
     let mut coalitions_by_size: Vec<Vec<usize>> = vec![vec![]; n_ops + 1];
     for idx in 0..n_coalitions {
-        let coalition_size = (0..n_ops).filter(|&i| bitmap[[i, idx]] == 1).count();
+        let coalition_size = (0..n_ops).filter(|&i| bitmap[(i, idx)] == 1).count();
         coalitions_by_size[coalition_size].push(idx);
     }
 
@@ -209,62 +208,51 @@ fn solve_coalition_values_sampled(
 
 /// Compute expected values accounting for operator downtime
 pub fn compute_expected_values(
-    svalue: &Array1<f64>,
-    size: &Array1<usize>,
+    svalue: &Col<f64>,
+    size: &Col<usize>,
     operator_uptime: f64,
     n_ops: usize,
-) -> Result<Array1<f64>> {
-    // Configure faer to use all available threads for matrix operations
+) -> Result<Col<f64>> {
+    // Returns owned Col<f64>
     faer::set_global_parallelism(Par::rayon(0));
 
-    let n_coal = svalue.len();
+    let n_coal = svalue.nrows();
     let bitmap = generate_coalition_bitmap(n_ops);
+    let submask: Mat<f64> = build_submask(&bitmap, n_coal);
 
-    // Build submask for coalition subset relationships
-    let submask = build_submask(&bitmap, n_coal);
+    let base_p: Col<f64> = Col::from_fn(size.nrows(), |i| operator_uptime.powi(size[i] as i32));
 
-    // Build probability matrix
-    let base_p: Array1<f64> = size
-        .iter()
-        .map(|&s| operator_uptime.powi(s as i32))
-        .collect();
-
-    // Element-wise multiply base_p with submask rows using broadcasting
     // bp_masked[i,j] = base_p[j] * submask[i,j]
-    let base_p_broadcast = base_p.view().insert_axis(ndarray::Axis(0));
-    let bp_masked = &base_p_broadcast * &submask;
-
-    // Compute expected values using matrix operations matching Python exactly
-    // Build coefficient matrix
-    let coef = build_coefficient_matrix(n_ops)?;
-    let coef_dense = coef.to_dense();
-
-    // Convert sparse coefficient matrix to dense ndarray
-    let coef_array = {
-        let mut arr = Array2::zeros((n_coal, n_coal));
-        for i in 0..n_coal {
-            for j in 0..n_coal {
-                arr[[i, j]] = coef_dense[(i, j)];
-            }
+    // Using loop for clarity, faer's broadcasting for this specific pattern can be less direct
+    let mut bp_masked = Mat::zeros(n_coal, n_coal);
+    for r in 0..n_coal {
+        for c in 0..n_coal {
+            bp_masked[(r, c)] = base_p[c] * submask[(r, c)];
         }
-        arr
-    };
+    }
 
-    // Compute term = bp_masked @ (coef * submask) using ndarray operations
-    // First compute coef * submask (element-wise)
-    let coef_times_submask = &coef_array * &submask;
+    // Build sparse matrix
+    let coef_sparse = build_coefficient_matrix(n_ops)?;
+    // Then dense
+    let coef_mat: Mat<f64> = coef_sparse.to_dense();
 
-    // Matrix multiplication bp_masked @ coef_times_submask
-    let term = bp_masked.dot(&coef_times_submask);
+    // coef_times_submask = coef_mat .* submask (element-wise)
+    let coef_times_submask =
+        Mat::from_fn(n_coal, n_coal, |r, c| coef_mat[(r, c)] * submask[(r, c)]);
 
-    // Compute part = (bp_masked + term) * submask
-    let part = (&bp_masked + &term) * &submask;
+    // term = bp_masked * coef_times_submask (matrix multiplication)
+    let term: Mat<f64> = bp_masked.as_ref() * coef_times_submask.as_ref();
 
-    // Compute evalue = part.T @ svalue (or equivalently, svalue @ part along rows)
-    let mut evalue = part.dot(svalue);
+    // part = (bp_masked + term) .* submask (element-wise)
+    let part = Mat::from_fn(n_coal, n_coal, |r, c| {
+        (bp_masked[(r, c)] + term[(r, c)]) * submask[(r, c)]
+    });
 
-    // Special case: empty coalition
-    evalue[0] = svalue[0];
+    let mut evalue: Col<f64> = part.as_ref() * svalue.as_ref();
+
+    if n_coal > 0 {
+        evalue[0] = svalue[0];
+    }
 
     Ok(evalue)
 }
@@ -272,12 +260,12 @@ pub fn compute_expected_values(
 /// Calculate Shapley values for each operator
 pub fn calculate_shapley_values(
     operators: &[String],
-    evalue: &Array1<f64>,
-    size: &Array1<usize>,
+    evalue: &Col<f64>,
+    size: &Col<usize>,
     n_ops: usize,
 ) -> Result<Vec<ShapleyValue>> {
     let bitmap = generate_coalition_bitmap(n_ops);
-    let mut shapley = Array1::zeros(n_ops);
+    let mut shapley = Col::zeros(n_ops);
 
     // Pre-compute factorials up to n_ops
     let factorials: Vec<f64> = (0..=n_ops).map(|i| factorial(i) as f64).collect();
@@ -286,13 +274,13 @@ pub fn calculate_shapley_values(
     for (k, _op) in operators.iter().enumerate() {
         // Find coalitions with/without operator
         let with_op: Vec<usize> = (0..bitmap.ncols())
-            .filter(|&i| bitmap[[k, i]] == 1)
+            .filter(|&i| bitmap[(k, i)] == 1)
             .collect();
 
         let without_op: Vec<usize> = with_op.iter().map(|&i| i - (1 << k)).collect();
 
         // Calculate weights using pre-computed factorials
-        let weights: Array1<f64> = with_op
+        let weights: Vec<f64> = with_op
             .iter()
             .map(|&i| {
                 let s = size[i];
@@ -309,10 +297,15 @@ pub fn calculate_shapley_values(
     }
 
     // Convert to percentages
-    let mut percent = shapley.mapv(|v| v.max(0.0));
-    let total = percent.sum();
+    let mut percent = Col::zeros(n_ops);
+    for i in 0..n_ops {
+        percent[i] = shapley[i].max(0.0);
+    }
+    let total: f64 = (0..n_ops).map(|i| percent[i]).sum();
     if total > 0.0 {
-        percent /= total;
+        for i in 0..n_ops {
+            percent[i] /= total;
+        }
     }
 
     // Build result
@@ -331,15 +324,11 @@ pub fn calculate_shapley_values(
 // Helper functions
 
 #[inline]
-fn get_coalition_subset<'a>(
-    operators: &'a [String],
-    bitmap: &Array2<u8>,
-    idx: usize,
-) -> Vec<&'a str> {
+fn get_coalition_subset<'a>(operators: &'a [String], bitmap: &Mat<u8>, idx: usize) -> Vec<&'a str> {
     operators
         .iter()
         .enumerate()
-        .filter_map(|(i, op)| match bitmap[[i, idx]] == 1 {
+        .filter_map(|(i, op)| match bitmap[(i, idx)] == 1 {
             false => None,
             true => Some(op.as_str()),
         })
@@ -451,7 +440,7 @@ fn solve_single_coalition(
 
     // Add bandwidth constraints (inequality) if any
     let mut n_ineq_constraints = 0;
-    if !selected_rows.is_empty() && !primitives.b_ub.is_empty() {
+    if !selected_rows.is_empty() && primitives.b_ub.nrows() > 0 {
         let mut a_ub_map = std::collections::HashMap::new();
         for triplet in primitives.a_ub.triplet_iter() {
             let row_idx = triplet.row.unbound();
@@ -575,8 +564,8 @@ fn solve_single_coalition(
 }
 
 #[inline]
-fn build_submask(_bitmap: &Array2<u8>, n_coal: usize) -> Array2<f64> {
-    let mut submask = Array2::zeros((n_coal, n_coal));
+fn build_submask(_bitmap: &Mat<u8>, n_coal: usize) -> Mat<f64> {
+    let mut submask = Mat::zeros(n_coal, n_coal);
 
     for i in 0..n_coal {
         for j in 0..=i {
@@ -584,7 +573,7 @@ fn build_submask(_bitmap: &Array2<u8>, n_coal: usize) -> Array2<f64> {
             // Check if coalition j is subset of i using bitmask
             // j is subset of i if (j & i) == j
             if (j & i) == j {
-                submask[[i, j]] = 1.0;
+                submask[(i, j)] = 1.0;
             }
         }
     }
@@ -691,16 +680,22 @@ mod tests {
     fn test_generate_coalition_bitmap() {
         let bitmap = generate_coalition_bitmap(3);
 
-        assert_eq!(bitmap.shape(), &[3, 8]); // 3 operators, 2^3 coalitions
+        assert_eq!((bitmap.nrows(), bitmap.ncols()), (3, 8)); // 3 operators, 2^3 coalitions
 
         // Empty coalition
-        assert_eq!(bitmap.column(0), Array1::from_vec(vec![0, 0, 0]));
+        assert_eq!(bitmap[(0, 0)], 0);
+        assert_eq!(bitmap[(1, 0)], 0);
+        assert_eq!(bitmap[(2, 0)], 0);
 
         // Full coalition
-        assert_eq!(bitmap.column(7), Array1::from_vec(vec![1, 1, 1]));
+        assert_eq!(bitmap[(0, 7)], 1);
+        assert_eq!(bitmap[(1, 7)], 1);
+        assert_eq!(bitmap[(2, 7)], 1);
 
         // Coalition {0, 2}
-        assert_eq!(bitmap.column(5), Array1::from_vec(vec![1, 0, 1]));
+        assert_eq!(bitmap[(0, 5)], 1);
+        assert_eq!(bitmap[(1, 5)], 0);
+        assert_eq!(bitmap[(2, 5)], 1);
     }
 
     #[test]
@@ -720,29 +715,29 @@ mod tests {
 
         // submask[i,j] = 1 if coalition j is subset of coalition i
         // Coalition 0 is empty set, so only itself is a subset
-        assert_eq!(submask[[0, 0]], 1.0);
-        assert_eq!(submask[[0, 1]], 0.0);
-        assert_eq!(submask[[0, 2]], 0.0);
-        assert_eq!(submask[[0, 3]], 0.0);
+        assert_eq!(submask[(0, 0)], 1.0);
+        assert_eq!(submask[(0, 1)], 0.0);
+        assert_eq!(submask[(0, 2)], 0.0);
+        assert_eq!(submask[(0, 3)], 0.0);
 
         // Coalition 1 has empty set as subset, and itself
-        assert_eq!(submask[[1, 0]], 1.0);
-        assert_eq!(submask[[1, 1]], 1.0);
-        assert_eq!(submask[[1, 2]], 0.0);
-        assert_eq!(submask[[1, 3]], 0.0);
+        assert_eq!(submask[(1, 0)], 1.0);
+        assert_eq!(submask[(1, 1)], 1.0);
+        assert_eq!(submask[(1, 2)], 0.0);
+        assert_eq!(submask[(1, 3)], 0.0);
 
         // Coalition 3 is full coalition, all are subsets
-        assert_eq!(submask[[3, 0]], 1.0);
-        assert_eq!(submask[[3, 1]], 1.0);
-        assert_eq!(submask[[3, 2]], 1.0);
-        assert_eq!(submask[[3, 3]], 1.0);
+        assert_eq!(submask[(3, 0)], 1.0);
+        assert_eq!(submask[(3, 1)], 1.0);
+        assert_eq!(submask[(3, 2)], 1.0);
+        assert_eq!(submask[(3, 3)], 1.0);
     }
 
     #[test]
     fn test_shapley_value_calculation() {
         let operators = vec!["Op1".to_string(), "Op2".to_string()];
-        let evalue = Array1::from_vec(vec![0.0, 50.0, 50.0, 100.0]);
-        let size = Array1::from_vec(vec![0, 1, 1, 2]);
+        let evalue = Col::from_iter(vec![0.0, 50.0, 50.0, 100.0]);
+        let size = Col::from_iter(vec![0, 1, 1, 2]);
 
         let result = calculate_shapley_values(&operators, &evalue, &size, 2).unwrap();
 
@@ -786,9 +781,9 @@ mod tests {
             .expect("Failed to create test matrix");
         let a_ub = SparseColMat::try_new_from_triplets(n_constraints, n_constraints, &ub_triplets)
             .expect("Failed to create test matrix");
-        let b_eq = Array1::ones(n_constraints);
-        let b_ub = Array1::from_elem(n_constraints, 100.0);
-        let cost = Array1::from_elem(n_links, 1.0);
+        let b_eq = Col::ones(n_constraints);
+        let b_ub = Col::full(n_constraints, 100.0);
+        let cost = Col::full(n_links, 1.0);
 
         // Create operator indices
         let row_index1 = vec!["Op1".to_string(); n_constraints];
@@ -819,8 +814,8 @@ mod tests {
         let (values, sizes) = solve_coalition_values(&operators, &bitmap, &primitives).unwrap();
 
         // With 5 operators, we have 2^5 = 32 coalitions
-        assert_eq!(values.len(), 32);
-        assert_eq!(sizes.len(), 32);
+        assert_eq!(values.nrows(), 32);
+        assert_eq!(sizes.nrows(), 32);
 
         // Verify coalition sizes are correct
         assert_eq!(sizes[0], 0); // Empty coalition
