@@ -1,5 +1,6 @@
+# Default (list of commands)
 default:
-    just --list --unsorted
+    just -l
 
 # ---------------
 # Examples
@@ -32,6 +33,14 @@ clippy:
 # Run tests (all features)
 test:
     cargo nextest run --all-features
+
+# Run benchmarks
+bench:
+    cargo bench
+
+# Clean
+clean:
+    cargo clean
 
 # ---------------
 # CI

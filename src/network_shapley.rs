@@ -3,168 +3,143 @@ use crate::{
         calculate_shapley_values, compute_expected_values, enumerate_operators,
         generate_coalition_bitmap, solve_coalition_values,
     },
-    link_preparation::{
-        generate_helper_links, merge_link_components, prepare_private_links, prepare_public_links,
-    },
-    lp_construction::{
-        build_bandwidth_constraints, build_flow_constraints, build_node_index,
-        build_objective_coefficients, extract_operator_indices,
-    },
-    types::{
-        DemandMatrix, LPPrimitives, Link, PrivateLinks, PublicLinks, Result, ShapleyValue,
-        decimal_to_f64,
-    },
-    validation::{
-        validate_endpoint_naming, validate_operator_names, validate_private_links,
-        validate_public_links, validate_public_pathway_coverage, validate_switch_naming,
-        validate_traffic_types,
-    },
+    lp::{consolidate_map, primitives},
+    types::{DemandMatrix, PrivateLinks, PublicLinks, Result, ShapleyValue, decimal_to_f64},
+    validation::validate_operator_names,
 };
 use faer::Par;
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, dec};
 
-/// Construct a single and fully-validated link table for LP primitives
-pub fn consolidate_map(
-    private_links: &PrivateLinks,
-    public_links: &PublicLinks,
-    demand: &DemandMatrix,
-    hybrid_penalty: Decimal,
-) -> Result<Vec<Link>> {
-    // Validate input data
-    validate_private_links(private_links)?;
-    validate_public_links(public_links)?;
-    validate_switch_naming(&private_links.links, "private")?;
-    validate_switch_naming(&public_links.links, "public")?;
-    validate_endpoint_naming(demand)?;
-    validate_traffic_types(demand)?;
-
-    // Prepare links
-    let mut private_links_mut = private_links.links.clone();
-    let private_df = prepare_private_links(&mut private_links_mut)?;
-    let public_df = prepare_public_links(&public_links.links)?;
-
-    // Validate public pathway coverage
-    validate_public_pathway_coverage(&private_df, &public_df, demand)?;
-
-    // Generate helper links
-    let helper_df = generate_helper_links(&public_df, demand)?;
-
-    // Merge all components
-    merge_link_components(private_df, public_df, helper_df, hybrid_penalty)
-}
-
-/// Translate link map and demand into the core linear program primitives
-pub fn lp_primitives(
-    link_map: &[Link],
-    demand: &DemandMatrix,
-    demand_multiplier: Decimal,
-) -> Result<LPPrimitives> {
-    // Scale demand
-    let mut scaled_demand = demand.clone();
-    for d in &mut scaled_demand.demands {
-        d.traffic *= demand_multiplier;
-    }
-
-    // Count private links (those with non-"0" operators)
-    let n_private = link_map.iter().filter(|link| link.operator1 != "0").count();
-
-    // Build node index
-    let node_idx = build_node_index(link_map, &scaled_demand);
-
-    // Build constraint matrices
-    let commodities = scaled_demand.unique_types();
-    let (a_eq, b_eq, keep) = build_flow_constraints(link_map, &scaled_demand, &node_idx)?;
-    let (a_ub, b_ub) = build_bandwidth_constraints(link_map, n_private, &commodities, &keep)?;
-
-    // Extract operator indices
-    let op_indices = extract_operator_indices(link_map, n_private, &commodities, &keep);
-
-    // Build objective coefficients
-    let cost = build_objective_coefficients(link_map, &commodities, &keep);
-
-    Ok(LPPrimitives {
-        a_eq,
-        a_ub,
-        b_eq,
-        b_ub,
-        cost,
-        row_index1: op_indices["row_index1"].clone(),
-        row_index2: op_indices["row_index2"].clone(),
-        col_index1: op_indices["col_index1"].clone(),
-        col_index2: op_indices["col_index2"].clone(),
-    })
-}
-
-/// Compute Shapley values per operator
-pub fn network_shapley(
-    private_links: &PrivateLinks,
-    public_links: &PublicLinks,
-    demand: &DemandMatrix,
+pub struct NetworkShapley {
+    private_links: PrivateLinks,
+    public_links: PublicLinks,
+    demand: DemandMatrix,
     operator_uptime: Decimal,
     hybrid_penalty: Decimal,
     demand_multiplier: Decimal,
-) -> Result<Vec<ShapleyValue>> {
-    // Configure faer to use all available threads for matrix operations
-    faer::set_global_parallelism(Par::rayon(0));
+}
 
-    // Enumerate operators and validate
-    let operators = enumerate_operators(&private_links.links);
-    validate_operator_names(&operators)?;
-    let n_ops = operators.len();
+impl NetworkShapley {
+    pub fn builder() -> NetworkShapleyBuilder {
+        NetworkShapleyBuilder::default()
+    }
 
-    // Generate coalition bitmap
-    let bitmap = generate_coalition_bitmap(n_ops);
+    /// Compute Shapley values per operator
+    pub fn compute(&self) -> Result<Vec<ShapleyValue>> {
+        // Configure faer to use all available threads for matrix operations
+        faer::set_global_parallelism(Par::rayon(0));
 
-    // Get LP primitives
-    let full_map = consolidate_map(private_links, public_links, demand, hybrid_penalty)?;
-    let primitives = lp_primitives(&full_map, demand, demand_multiplier)?;
+        // Enumerate operators and validate
+        let operators = enumerate_operators(&self.private_links.links);
+        validate_operator_names(&operators)?;
+        let n_ops = operators.len();
 
-    // Solve for coalition values
-    let (svalue, size) = solve_coalition_values(&operators, &bitmap, &primitives)?;
+        // Generate coalition bitmap
+        let bitmap = generate_coalition_bitmap(n_ops);
 
-    // Compute expected values with downtime
-    let evalue = compute_expected_values(&svalue, &size, decimal_to_f64(operator_uptime), n_ops)?;
+        // Get LP primitives
+        let full_map = consolidate_map(
+            &self.private_links,
+            &self.public_links,
+            &self.demand,
+            self.hybrid_penalty,
+        )?;
+        let primitives = primitives(&full_map, &self.demand, self.demand_multiplier)?;
 
-    // Calculate Shapley values
-    calculate_shapley_values(&operators, &evalue, &size, n_ops)
+        // Solve for coalition values
+        let (svalue, size) = solve_coalition_values(&operators, &bitmap, &primitives)?;
+
+        // Compute expected values with downtime
+        let evalue =
+            compute_expected_values(&svalue, &size, decimal_to_f64(self.operator_uptime), n_ops)?;
+
+        // Calculate Shapley values
+        calculate_shapley_values(&operators, &evalue, &size, n_ops)
+    }
+}
+
+#[derive(Default)]
+pub struct NetworkShapleyBuilder {
+    private_links: PrivateLinks,
+    public_links: PublicLinks,
+    demand: DemandMatrix,
+    operator_uptime: Decimal,
+    hybrid_penalty: Decimal,
+    demand_multiplier: Decimal,
+}
+
+impl NetworkShapleyBuilder {
+    pub fn new(
+        private_links: PrivateLinks,
+        public_links: PublicLinks,
+        demand: DemandMatrix,
+    ) -> Self {
+        Self {
+            private_links,
+            public_links,
+            demand,
+            operator_uptime: dec!(0.98),
+            hybrid_penalty: dec!(5.0),
+            demand_multiplier: dec!(1.0),
+        }
+    }
+
+    pub fn operator_uptime(mut self, operator_uptime: Decimal) -> NetworkShapleyBuilder {
+        self.operator_uptime = operator_uptime;
+        self
+    }
+
+    pub fn hybrid_penalty(mut self, hybrid_penalty: Decimal) -> NetworkShapleyBuilder {
+        self.hybrid_penalty = hybrid_penalty;
+        self
+    }
+
+    pub fn demand_multiplier(mut self, demand_multiplier: Decimal) -> NetworkShapleyBuilder {
+        self.demand_multiplier = demand_multiplier;
+        self
+    }
+
+    pub fn build(self) -> NetworkShapley {
+        NetworkShapley {
+            private_links: self.private_links,
+            public_links: self.public_links,
+            demand: self.demand,
+            operator_uptime: self.operator_uptime,
+            hybrid_penalty: self.hybrid_penalty,
+            demand_multiplier: self.demand_multiplier,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::{LinkBuilder, lp};
+
     use super::*;
-    use rust_decimal_macros::dec;
+    use rust_decimal::dec;
 
     fn create_example_private_links() -> PrivateLinks {
         let links = vec![
             {
-                let mut link = Link::new("FRA1".to_string(), "NYC1".to_string());
-                link.cost = dec!(40);
-                link.bandwidth = dec!(10);
-                link.operator1 = "Alpha".to_string();
-                link.operator2 = "0".to_string();
-                link.uptime = dec!(1);
-                link.shared = 0;
-                link
+                LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+                    .cost(dec!(40))
+                    .bandwidth(dec!(10))
+                    .operator1("Alpha".to_string())
+                    .build()
             },
             {
-                let mut link = Link::new("FRA1".to_string(), "SIN1".to_string());
-                link.cost = dec!(50);
-                link.bandwidth = dec!(10);
-                link.operator1 = "Beta".to_string();
-                link.operator2 = "0".to_string();
-                link.uptime = dec!(1);
-                link.shared = 0;
-                link
+                LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+                    .cost(dec!(50))
+                    .bandwidth(dec!(10))
+                    .operator1("Beta".to_string())
+                    .build()
             },
             {
-                let mut link = Link::new("SIN1".to_string(), "NYC1".to_string());
-                link.cost = dec!(80);
-                link.bandwidth = dec!(10);
-                link.operator1 = "Gamma".to_string();
-                link.operator2 = "0".to_string();
-                link.uptime = dec!(1);
-                link.shared = 0;
-                link
+                LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+                    .cost(dec!(80))
+                    .bandwidth(dec!(10))
+                    .operator1("Gamma".to_string())
+                    .build()
             },
         ];
         PrivateLinks::from_links(links)
@@ -173,19 +148,19 @@ mod tests {
     fn create_example_public_links() -> PublicLinks {
         let links = vec![
             {
-                let mut link = Link::new("FRA1".to_string(), "NYC1".to_string());
-                link.cost = dec!(70);
-                link
+                LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+                    .cost(dec!(70))
+                    .build()
             },
             {
-                let mut link = Link::new("FRA1".to_string(), "SIN1".to_string());
-                link.cost = dec!(80);
-                link
+                LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+                    .cost(dec!(80))
+                    .build()
             },
             {
-                let mut link = Link::new("SIN1".to_string(), "NYC1".to_string());
-                link.cost = dec!(120);
-                link
+                LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+                    .cost(dec!(120))
+                    .build()
             },
         ];
         PublicLinks::from_links(links)
@@ -227,7 +202,7 @@ mod tests {
         let demand = create_example_demand();
 
         let link_map = consolidate_map(&private_links, &public_links, &demand, dec!(5)).unwrap();
-        let primitives = lp_primitives(&link_map, &demand, dec!(1)).unwrap();
+        let primitives = lp::primitives(&link_map, &demand, dec!(1)).unwrap();
 
         // Check that matrices have appropriate dimensions
         assert!(primitives.a_eq.nrows() > 0);
@@ -245,15 +220,10 @@ mod tests {
         let public_links = create_example_public_links();
         let demand = create_example_demand();
 
-        let result = network_shapley(
-            &private_links,
-            &public_links,
-            &demand,
-            dec!(0.98),
-            dec!(5.0),
-            dec!(1.0),
-        )
-        .unwrap();
+        let result = NetworkShapleyBuilder::new(private_links, public_links, demand)
+            .build()
+            .compute()
+            .unwrap();
 
         // Should have 3 operators
         assert_eq!(result.len(), 3);

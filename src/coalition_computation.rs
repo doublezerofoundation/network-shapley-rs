@@ -646,29 +646,30 @@ fn factorial(n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use crate::LinkBuilder;
+
     use super::*;
-    use rust_decimal_macros::dec;
+    use rust_decimal::dec;
 
     #[test]
     fn test_enumerate_operators() {
         let links = vec![
             {
-                let mut link = Link::new("A".to_string(), "B".to_string());
-                link.operator1 = "Alpha".to_string();
-                link.operator2 = "0".to_string();
-                link
+                LinkBuilder::new("A".to_string(), "B".to_string())
+                    .operator1("Alpha".to_string())
+                    .build()
             },
             {
-                let mut link = Link::new("B".to_string(), "C".to_string());
-                link.operator1 = "Beta".to_string();
-                link.operator2 = "Gamma".to_string();
-                link
+                LinkBuilder::new("B".to_string(), "C".to_string())
+                    .operator1("Beta".to_string())
+                    .operator2("Gamma".to_string())
+                    .build()
             },
             {
-                let mut link = Link::new("C".to_string(), "D".to_string());
-                link.operator1 = "Alpha".to_string();
-                link.operator2 = "Beta".to_string();
-                link
+                LinkBuilder::new("C".to_string(), "D".to_string())
+                    .operator1("Alpha".to_string())
+                    .operator2("Beta".to_string())
+                    .build()
             },
         ];
 

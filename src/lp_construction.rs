@@ -367,14 +367,14 @@ fn select_columns(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Demand, Link};
-    use rust_decimal_macros::dec;
+    use crate::{LinkBuilder, types::Demand};
+    use rust_decimal::dec;
 
     #[test]
     fn test_build_node_index() {
         let links = vec![
-            Link::new("A".to_string(), "B".to_string()),
-            Link::new("B".to_string(), "C".to_string()),
+            LinkBuilder::new("A".to_string(), "B".to_string()).build(),
+            LinkBuilder::new("B".to_string(), "C".to_string()).build(),
         ];
 
         let demands = vec![Demand::new("A".to_string(), "C".to_string(), dec!(10), 1)];
@@ -391,16 +391,8 @@ mod tests {
     #[test]
     fn test_build_flow_constraints() {
         let links = vec![
-            {
-                let mut link = Link::new("A".to_string(), "B".to_string());
-                link.link_type = 0;
-                link
-            },
-            {
-                let mut link = Link::new("B".to_string(), "C".to_string());
-                link.link_type = 0;
-                link
-            },
+            { LinkBuilder::new("A".to_string(), "B".to_string()).build() },
+            { LinkBuilder::new("B".to_string(), "C".to_string()).build() },
         ];
 
         let demands = vec![Demand::new("A".to_string(), "C".to_string(), dec!(10), 1)];
@@ -426,25 +418,25 @@ mod tests {
     fn test_build_bandwidth_constraints() {
         let links = vec![
             {
-                let mut link = Link::new("A".to_string(), "B".to_string());
-                link.shared = 1;
-                link.bandwidth = dec!(100);
-                link.operator1 = "Op1".to_string();
-                link
+                LinkBuilder::new("A".to_string(), "B".to_string())
+                    .shared(1)
+                    .bandwidth(dec!(100))
+                    .operator1("Op1".to_string())
+                    .build()
             },
             {
-                let mut link = Link::new("B".to_string(), "C".to_string());
-                link.shared = 1;
-                link.bandwidth = dec!(100);
-                link.operator1 = "Op1".to_string();
-                link
+                LinkBuilder::new("B".to_string(), "C".to_string())
+                    .shared(1)
+                    .bandwidth(dec!(100))
+                    .operator1("Op1".to_string())
+                    .build()
             },
             {
-                let mut link = Link::new("C".to_string(), "D".to_string());
-                link.shared = 2;
-                link.bandwidth = dec!(50);
-                link.operator1 = "Op2".to_string();
-                link
+                LinkBuilder::new("C".to_string(), "D".to_string())
+                    .shared(2)
+                    .bandwidth(dec!(50))
+                    .operator1("Op2".to_string())
+                    .build()
             },
         ];
 
@@ -466,24 +458,24 @@ mod tests {
     fn test_extract_operator_indices() {
         let links = vec![
             {
-                let mut link = Link::new("A".to_string(), "B".to_string());
-                link.shared = 1;
-                link.operator1 = "Op1".to_string();
-                link.operator2 = "Op1".to_string();
-                link
+                LinkBuilder::new("A".to_string(), "B".to_string())
+                    .shared(1)
+                    .operator1("Op1".to_string())
+                    .operator2("Op1".to_string())
+                    .build()
             },
             {
-                let mut link = Link::new("B".to_string(), "C".to_string());
-                link.shared = 2;
-                link.operator1 = "Op2".to_string();
-                link.operator2 = "Op3".to_string();
-                link
+                LinkBuilder::new("B".to_string(), "C".to_string())
+                    .shared(2)
+                    .operator1("Op2".to_string())
+                    .operator2("Op3".to_string())
+                    .build()
             },
             {
-                let mut link = Link::new("C".to_string(), "D".to_string());
-                link.operator1 = "0".to_string();
-                link.operator2 = "0".to_string();
-                link
+                LinkBuilder::new("C".to_string(), "D".to_string())
+                    .operator1("0".to_string())
+                    .operator2("0".to_string())
+                    .build()
             },
         ];
 
@@ -501,19 +493,19 @@ mod tests {
     fn test_build_objective_coefficients() {
         let links = vec![
             {
-                let mut link = Link::new("A".to_string(), "B".to_string());
-                link.cost = dec!(10);
-                link
+                LinkBuilder::new("A".to_string(), "B".to_string())
+                    .cost(dec!(10))
+                    .build()
             },
             {
-                let mut link = Link::new("B".to_string(), "C".to_string());
-                link.cost = dec!(20);
-                link
+                LinkBuilder::new("B".to_string(), "C".to_string())
+                    .cost(dec!(20))
+                    .build()
             },
             {
-                let mut link = Link::new("C".to_string(), "D".to_string());
-                link.cost = dec!(30);
-                link
+                LinkBuilder::new("C".to_string(), "D".to_string())
+                    .cost(dec!(30))
+                    .build()
             },
         ];
 

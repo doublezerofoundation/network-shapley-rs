@@ -12,60 +12,53 @@
 //!     Beta 171.9704   0.4972
 //!    Gamma 148.9404   0.4306
 
-use rust_decimal_macros::dec;
-use shapley::{Demand, DemandMatrix, Link, PrivateLinks, PublicLinks};
+use rust_decimal::dec;
+use shapley::{
+    Demand, DemandMatrix, LinkBuilder, NetworkShapleyBuilder, PrivateLinks, PublicLinks,
+};
 
 fn build_sample_inputs() -> (PrivateLinks, PublicLinks, DemandMatrix) {
     // Private links
     let private_links = PrivateLinks::from_links(vec![
         {
-            let mut link = Link::new("FRA1".to_string(), "NYC1".to_string());
-            link.cost = dec!(40);
-            link.bandwidth = dec!(10);
-            link.operator1 = "Alpha".to_string();
-            link.operator2 = "0".to_string(); // Will be filled to "Alpha"
-            link.uptime = dec!(1);
-            link.shared = 0; // Will be assigned
-            link
+            LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+                .cost(dec!(40))
+                .bandwidth(dec!(10))
+                .operator1("Alpha".to_string())
+                .build()
         },
         {
-            let mut link = Link::new("FRA1".to_string(), "SIN1".to_string());
-            link.cost = dec!(50);
-            link.bandwidth = dec!(10);
-            link.operator1 = "Beta".to_string();
-            link.operator2 = "0".to_string(); // Will be filled to "Beta"
-            link.uptime = dec!(1);
-            link.shared = 0; // Will be assigned
-            link
+            LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+                .cost(dec!(50))
+                .bandwidth(dec!(10))
+                .operator1("Beta".to_string())
+                .build()
         },
         {
-            let mut link = Link::new("SIN1".to_string(), "NYC1".to_string());
-            link.cost = dec!(80);
-            link.bandwidth = dec!(10);
-            link.operator1 = "Gamma".to_string();
-            link.operator2 = "0".to_string(); // Will be filled to "Gamma"
-            link.uptime = dec!(1);
-            link.shared = 0; // Will be assigned
-            link
+            LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+                .cost(dec!(80))
+                .bandwidth(dec!(10))
+                .operator1("Gamma".to_string())
+                .build()
         },
     ]);
 
     // Public links
     let public_links = PublicLinks::from_links(vec![
         {
-            let mut link = Link::new("FRA1".to_string(), "NYC1".to_string());
-            link.cost = dec!(70);
-            link
+            LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+                .cost(dec!(70))
+                .build()
         },
         {
-            let mut link = Link::new("FRA1".to_string(), "SIN1".to_string());
-            link.cost = dec!(80);
-            link
+            LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+                .cost(dec!(80))
+                .build()
         },
         {
-            let mut link = Link::new("SIN1".to_string(), "NYC1".to_string());
-            link.cost = dec!(120);
-            link
+            LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+                .cost(dec!(120))
+                .build()
         },
     ]);
 
@@ -80,16 +73,9 @@ fn build_sample_inputs() -> (PrivateLinks, PublicLinks, DemandMatrix) {
 
 fn main() {
     let (private_links, public_links, demand) = build_sample_inputs();
-
-    let result = shapley::network_shapley(
-        &private_links,
-        &public_links,
-        &demand,
-        dec!(0.98),
-        dec!(5.0),
-        dec!(1.0),
-    );
-
+    let result = NetworkShapleyBuilder::new(private_links, public_links, demand)
+        .build()
+        .compute();
     match result {
         Ok(shapley_values) => {
             println!("\nShapley results:\n");

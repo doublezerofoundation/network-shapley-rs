@@ -1620,7 +1620,6 @@ dependencies = [
  "rand",
  "rayon",
  "rust_decimal",
- "rust_decimal_macros",
  "serde",
  "thiserror 2.0.12",
 ]

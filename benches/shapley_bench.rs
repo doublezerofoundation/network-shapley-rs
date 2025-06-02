@@ -1,6 +1,8 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use rust_decimal_macros::dec;
-use shapley::{Demand, DemandMatrix, Link, PrivateLinks, PublicLinks, network_shapley};
+use rust_decimal::dec;
+use shapley::{
+    Demand, DemandMatrix, LinkBuilder, NetworkShapleyBuilder, PrivateLinks, PublicLinks, lp,
+};
 use std::hint::black_box;
 
 /// Generate a realistic test network with specified number of operators
@@ -23,16 +25,14 @@ fn generate_valid_test_network(n_operators: usize) -> (PrivateLinks, PublicLinks
         let from_idx = i % cities.len();
         let to_idx = (i + 1) % cities.len();
 
-        let mut link = Link::new(
+        let link = LinkBuilder::new(
             format!("{}{}", cities[from_idx], switch_suffix),
             format!("{}{}", cities[to_idx], switch_suffix),
-        );
-        link.cost = dec!(40) + dec!(10) * rust_decimal::Decimal::from(i as i32);
-        link.bandwidth = dec!(10);
-        link.operator1 = operator_names[i % n_operators].clone();
-        link.operator2 = "0".to_string(); // Will be filled to match operator1
-        link.uptime = dec!(1);
-        link.shared = 0; // Will be assigned by the system
+        )
+        .cost(dec!(40) + dec!(10) * rust_decimal::Decimal::from(i as i32))
+        .bandwidth(dec!(10))
+        .operator1(operator_names[i % n_operators].clone())
+        .build();
 
         private_links.push(link);
     }
@@ -43,16 +43,15 @@ fn generate_valid_test_network(n_operators: usize) -> (PrivateLinks, PublicLinks
             let from_idx = i;
             let to_idx = (i + 2) % cities.len();
 
-            let mut link = Link::new(
+            let link = LinkBuilder::new(
                 format!("{}{}", cities[from_idx], switch_suffix),
                 format!("{}{}", cities[to_idx], switch_suffix),
-            );
-            link.cost = dec!(60) + dec!(5) * rust_decimal::Decimal::from(i as i32);
-            link.bandwidth = dec!(8);
-            link.operator1 = operator_names[(i + 1) % n_operators].clone();
-            link.operator2 = "0".to_string();
-            link.uptime = dec!(0.98);
-            link.shared = 0;
+            )
+            .cost(dec!(60) + dec!(5) * rust_decimal::Decimal::from(i as i32))
+            .bandwidth(dec!(8))
+            .operator1(operator_names[(i + 1) % n_operators].clone())
+            .uptime(dec!(0.98))
+            .build();
 
             private_links.push(link);
         }
@@ -77,11 +76,12 @@ fn generate_valid_test_network(n_operators: usize) -> (PrivateLinks, PublicLinks
 
     for i in 0..cities_vec.len() {
         for j in (i + 1)..cities_vec.len() {
-            let mut link = Link::new(
+            let link = LinkBuilder::new(
                 format!("{}{}", cities_vec[i], switch_suffix),
                 format!("{}{}", cities_vec[j], switch_suffix),
-            );
-            link.cost = dec!(70) + dec!(10) * rust_decimal::Decimal::from((j - i) as i32);
+            )
+            .cost(dec!(70) + dec!(10) * rust_decimal::Decimal::from((j - i) as i32))
+            .build();
 
             public_links.push(link);
         }
@@ -156,14 +156,16 @@ fn benchmark_shapley_computation(c: &mut Criterion) {
             &n_operators,
             |b, _| {
                 b.iter(|| {
-                    network_shapley(
-                        black_box(&private_links),
-                        black_box(&public_links),
-                        black_box(&demand),
-                        black_box(dec!(0.98)), // operator_uptime
-                        black_box(dec!(5.0)),  // hybrid_penalty
-                        black_box(dec!(1.0)),  // demand_multiplier
+                    NetworkShapleyBuilder::new(
+                        black_box(private_links.clone()),
+                        black_box(public_links.clone()),
+                        black_box(demand.clone()),
                     )
+                    .operator_uptime(black_box(dec!(0.98)))
+                    .hybrid_penalty(black_box(dec!(5.0)))
+                    .demand_multiplier(black_box(dec!(1.0)))
+                    .build()
+                    .compute()
                 })
             },
         );
@@ -183,7 +185,7 @@ fn benchmark_components(c: &mut Criterion) {
     // Benchmark consolidate_map
     group.bench_function("consolidate_map", |b| {
         b.iter(|| {
-            shapley::consolidate_map(
+            lp::consolidate_map(
                 black_box(&private_links),
                 black_box(&public_links),
                 black_box(&demand),
@@ -193,12 +195,12 @@ fn benchmark_components(c: &mut Criterion) {
     });
 
     // Benchmark lp_primitives
-    let link_map = shapley::consolidate_map(&private_links, &public_links, &demand, dec!(5.0))
+    let link_map = lp::consolidate_map(&private_links, &public_links, &demand, dec!(5.0))
         .expect("Failed to consolidate map");
 
     group.bench_function("lp_primitives", |b| {
         b.iter(|| {
-            shapley::lp_primitives(
+            lp::primitives(
                 black_box(&link_map),
                 black_box(&demand),
                 black_box(dec!(1.0)),
@@ -247,14 +249,16 @@ fn benchmark_network_complexity(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("demands", n_demands), n_demands, |b, _| {
             b.iter(|| {
-                network_shapley(
-                    black_box(&private_links),
-                    black_box(&public_links),
-                    black_box(&demand_matrix),
-                    black_box(dec!(0.98)),
-                    black_box(dec!(5.0)),
-                    black_box(dec!(1.0)),
+                NetworkShapleyBuilder::new(
+                    black_box(private_links.clone()),
+                    black_box(public_links.clone()),
+                    black_box(demand_matrix.clone()),
                 )
+                .operator_uptime(black_box(dec!(0.98)))
+                .hybrid_penalty(black_box(dec!(5.0)))
+                .demand_multiplier(black_box(dec!(1.0)))
+                .build()
+                .compute()
             })
         });
     }
@@ -269,52 +273,43 @@ fn benchmark_example(c: &mut Criterion) {
     // Create the exact example from the code
     let private_links = PrivateLinks::from_links(vec![
         {
-            let mut link = Link::new("FRA1".to_string(), "NYC1".to_string());
-            link.cost = dec!(40);
-            link.bandwidth = dec!(10);
-            link.operator1 = "Alpha".to_string();
-            link.operator2 = "0".to_string();
-            link.uptime = dec!(1);
-            link.shared = 0;
-            link
+            LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+                .cost(dec!(40))
+                .bandwidth(dec!(10))
+                .operator1("Alpha".to_string())
+                .build()
         },
         {
-            let mut link = Link::new("FRA1".to_string(), "SIN1".to_string());
-            link.cost = dec!(50);
-            link.bandwidth = dec!(10);
-            link.operator1 = "Beta".to_string();
-            link.operator2 = "0".to_string();
-            link.uptime = dec!(1);
-            link.shared = 0;
-            link
+            LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+                .cost(dec!(50))
+                .bandwidth(dec!(10))
+                .operator1("Beta".to_string())
+                .build()
         },
         {
-            let mut link = Link::new("SIN1".to_string(), "NYC1".to_string());
-            link.cost = dec!(80);
-            link.bandwidth = dec!(10);
-            link.operator1 = "Gamma".to_string();
-            link.operator2 = "0".to_string();
-            link.uptime = dec!(1);
-            link.shared = 0;
-            link
+            LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+                .cost(dec!(80))
+                .bandwidth(dec!(10))
+                .operator1("Gamma".to_string())
+                .build()
         },
     ]);
 
     let public_links = PublicLinks::from_links(vec![
         {
-            let mut link = Link::new("FRA1".to_string(), "NYC1".to_string());
-            link.cost = dec!(70);
-            link
+            LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+                .cost(dec!(70))
+                .build()
         },
         {
-            let mut link = Link::new("FRA1".to_string(), "SIN1".to_string());
-            link.cost = dec!(80);
-            link
+            LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+                .cost(dec!(80))
+                .build()
         },
         {
-            let mut link = Link::new("SIN1".to_string(), "NYC1".to_string());
-            link.cost = dec!(120);
-            link
+            LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+                .cost(dec!(120))
+                .build()
         },
     ]);
 
@@ -325,14 +320,16 @@ fn benchmark_example(c: &mut Criterion) {
 
     group.bench_function("reference_example", |b| {
         b.iter(|| {
-            network_shapley(
-                black_box(&private_links),
-                black_box(&public_links),
-                black_box(&demand),
-                black_box(dec!(0.98)),
-                black_box(dec!(5.0)),
-                black_box(dec!(1.0)),
+            NetworkShapleyBuilder::new(
+                black_box(private_links.clone()),
+                black_box(public_links.clone()),
+                black_box(demand.clone()),
             )
+            .operator_uptime(black_box(dec!(0.98)))
+            .hybrid_penalty(black_box(dec!(5.0)))
+            .demand_multiplier(black_box(dec!(1.0)))
+            .build()
+            .compute()
         })
     });
 

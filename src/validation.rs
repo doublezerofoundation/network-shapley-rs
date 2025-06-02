@@ -154,7 +154,7 @@ fn has_digit(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Demand, Link};
+    use crate::{LinkBuilder, types::Demand};
     use rust_decimal::prelude::*;
 
     #[test]
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn test_validate_switch_naming() {
         // Valid switches (with digits)
-        let mut link = Link::new("NYC1".to_string(), "LAX1".to_string());
+        let mut link = LinkBuilder::new("NYC1".to_string(), "LAX1".to_string()).build();
         let links = vec![link.clone()];
         assert!(validate_switch_naming(&links, "private").is_ok());
 
@@ -250,14 +250,15 @@ mod tests {
     #[test]
     fn test_validate_public_pathway_coverage() {
         // Setup private links
-        let mut private_link = Link::new("NYC1".to_string(), "LAX1".to_string());
-        private_link.operator1 = "Op1".to_string();
+        let private_link = LinkBuilder::new("NYC1".to_string(), "LAX1".to_string())
+            .operator1("Op1".to_string())
+            .build();
         let private_links = vec![private_link];
 
         // Valid public coverage
         let public_links = vec![
-            Link::new("NYC1".to_string(), "LAX1".to_string()),
-            Link::new("LAX1".to_string(), "NYC1".to_string()),
+            LinkBuilder::new("NYC1".to_string(), "LAX1".to_string()).build(),
+            LinkBuilder::new("LAX1".to_string(), "NYC1".to_string()).build(),
         ];
 
         let demands = vec![Demand::new(
@@ -271,7 +272,7 @@ mod tests {
         assert!(validate_public_pathway_coverage(&private_links, &public_links, &matrix).is_ok());
 
         // Missing switch coverage
-        let public_links = vec![Link::new("NYC1".to_string(), "CHI1".to_string())];
+        let public_links = vec![LinkBuilder::new("NYC1".to_string(), "CHI1".to_string()).build()];
         assert!(matches!(
             validate_public_pathway_coverage(&private_links, &public_links, &matrix),
             Err(ShapleyError::IncompletePublicPathway { .. })
@@ -279,8 +280,8 @@ mod tests {
 
         // Missing demand coverage
         let public_links = vec![
-            Link::new("NYC1".to_string(), "LAX1".to_string()),
-            Link::new("LAX1".to_string(), "NYC1".to_string()),
+            LinkBuilder::new("NYC1".to_string(), "LAX1".to_string()).build(),
+            LinkBuilder::new("LAX1".to_string(), "NYC1".to_string()).build(),
         ];
         let demands = vec![Demand::new(
             "NYC".to_string(),

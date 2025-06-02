@@ -9,6 +9,84 @@ use serde::{Deserialize, Serialize};
 
 pub type Result<T> = std::result::Result<T, crate::error::ShapleyError>;
 
+#[derive(Default, Debug, Clone, PartialEq)]
+pub struct LinkBuilder {
+    pub start: String,
+    pub end: String,
+    pub cost: Decimal,
+    pub bandwidth: Decimal,
+    pub operator1: String,
+    pub operator2: String,
+    pub uptime: Decimal,
+    pub shared: usize,
+    pub link_type: usize,
+}
+
+impl LinkBuilder {
+    pub fn new(start: String, end: String) -> Self {
+        Self {
+            start,
+            end,
+            cost: Decimal::ZERO,
+            bandwidth: Decimal::ZERO,
+            operator1: String::from("0"),
+            operator2: String::from("0"),
+            uptime: Decimal::ONE,
+            shared: 0,
+            link_type: 0,
+        }
+    }
+
+    pub fn build(self) -> Link {
+        Link {
+            start: self.start,
+            end: self.end,
+            cost: self.cost,
+            bandwidth: self.bandwidth,
+            operator1: self.operator1,
+            operator2: self.operator2,
+            uptime: self.uptime,
+            shared: self.shared,
+            link_type: self.link_type,
+        }
+    }
+
+    pub fn cost(mut self, cost: Decimal) -> Self {
+        self.cost = cost;
+        self
+    }
+
+    pub fn bandwidth(mut self, bandwidth: Decimal) -> Self {
+        self.bandwidth = bandwidth;
+        self
+    }
+
+    pub fn operator1(mut self, operator1: String) -> Self {
+        self.operator1 = operator1;
+        self
+    }
+
+    pub fn operator2(mut self, operator2: String) -> Self {
+        self.operator2 = operator2;
+        self
+    }
+
+    pub fn uptime(mut self, uptime: Decimal) -> Self {
+        self.uptime = uptime;
+        self
+    }
+
+    pub fn shared(mut self, shared: usize) -> Self {
+        self.shared = shared;
+        self
+    }
+
+    pub fn link_type(mut self, link_type: usize) -> Self {
+        self.link_type = link_type;
+        self
+    }
+}
+
 /// Represents a network link between two nodes
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "csv", derive(Serialize, Deserialize))]
@@ -25,19 +103,8 @@ pub struct Link {
 }
 
 impl Link {
-    /// Create a new link with default values
-    pub fn new(start: String, end: String) -> Self {
-        Link {
-            start,
-            end,
-            cost: Decimal::ZERO,
-            bandwidth: Decimal::ZERO,
-            operator1: String::from("0"),
-            operator2: String::from("0"),
-            uptime: Decimal::ONE,
-            shared: 0,
-            link_type: 0,
-        }
+    pub fn builder() -> LinkBuilder {
+        LinkBuilder::default()
     }
 }
 
@@ -98,7 +165,7 @@ pub struct LPPrimitives {
 }
 
 /// Input data for private links
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct PrivateLinks {
     pub links: Vec<Link>,
 }
@@ -121,7 +188,7 @@ impl PrivateLinks {
 }
 
 /// Input data for public links
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct PublicLinks {
     pub links: Vec<Link>,
 }
@@ -144,7 +211,7 @@ impl PublicLinks {
 }
 
 /// Input data for demand matrix
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct DemandMatrix {
     pub demands: Vec<Demand>,
 }
@@ -277,13 +344,14 @@ mod csv_support {
                 let record: PrivateLinkRecord = result
                     .map_err(|e| crate::error::ShapleyError::ComputationError(e.to_string()))?;
 
-                let mut link = Link::new(record.start, record.end);
-                link.cost = record.cost;
-                link.bandwidth = record.bandwidth;
-                link.operator1 = record.operator1;
-                link.operator2 = record.operator2;
-                link.uptime = record.uptime;
-                link.shared = record.shared.unwrap_or(0);
+                let link = LinkBuilder::new(record.start, record.end)
+                    .cost(record.cost)
+                    .bandwidth(record.bandwidth)
+                    .operator1(record.operator1)
+                    .operator2(record.operator2)
+                    .uptime(record.uptime)
+                    .shared(record.shared.unwrap_or(0))
+                    .build();
 
                 links.push(link);
             }
@@ -303,8 +371,9 @@ mod csv_support {
                 let record: PublicLinkRecord = result
                     .map_err(|e| crate::error::ShapleyError::ComputationError(e.to_string()))?;
 
-                let mut link = Link::new(record.start, record.end);
-                link.cost = record.cost;
+                let link = LinkBuilder::new(record.start, record.end)
+                    .cost(record.cost)
+                    .build();
 
                 links.push(link);
             }
@@ -338,11 +407,11 @@ mod csv_support {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rust_decimal_macros::dec;
+    use rust_decimal::dec;
 
     #[test]
     fn test_link_creation() {
-        let link = Link::new("NYC1".to_string(), "LAX1".to_string());
+        let link = LinkBuilder::new("NYC1".to_string(), "LAX1".to_string()).build();
         assert_eq!(link.start, "NYC1");
         assert_eq!(link.end, "LAX1");
         assert_eq!(link.cost, Decimal::ZERO);
@@ -410,8 +479,8 @@ mod tests {
     #[test]
     fn test_private_links_operations() {
         let links = vec![
-            Link::new("A".to_string(), "B".to_string()),
-            Link::new("B".to_string(), "C".to_string()),
+            LinkBuilder::new("A".to_string(), "B".to_string()).build(),
+            LinkBuilder::new("B".to_string(), "C".to_string()).build(),
         ];
         let private_links = PrivateLinks::from_links(links);
 
