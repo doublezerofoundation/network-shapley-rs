@@ -14,6 +14,10 @@ simple-example:
 csv-example:
     cargo run --example csv --features csv --release
 
+# Run the simulated example
+simulated-example:
+    cargo run --example simulated --features csv --release
+
 # ---------------
 # Dev
 # ---------------

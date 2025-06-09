@@ -6,6 +6,8 @@ use rust_decimal::{
 
 #[cfg(feature = "csv")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "csv")]
+use tabled::Tabled;
 
 pub type Result<T> = std::result::Result<T, crate::error::ShapleyError>;
 
@@ -132,7 +134,7 @@ impl Demand {
 
 /// Represents a Shapley value result for an operator
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "csv", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "csv", derive(Serialize, Deserialize, Tabled))]
 pub struct ShapleyValue {
     pub operator: String,
     pub value: Decimal,

@@ -5,8 +5,6 @@ use faer::{
     Col, Mat, Par, Unbind,
     sparse::{SparseColMat, Triplet},
 };
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
 use std::collections::HashSet;
 
@@ -54,156 +52,44 @@ pub fn solve_coalition_values(
     let mut svalue = Col::full(n_coalitions, f64::NEG_INFINITY);
     let mut size = Col::from_fn(n_coalitions, |_| 0usize);
 
-    // For very large problems (10+ operators), use sampling
-    if operators.len() >= 10 {
-        solve_coalition_values_sampled(operators, bitmap, primitives, &mut svalue, &mut size)?;
-    } else {
-        // Determine if we should use parallel processing
-        let use_parallel = operators.len() > 2;
+    // Determine if we should use parallel processing
+    let use_parallel = operators.len() > 2;
 
-        if use_parallel {
-            // Parallel version
-            let results: Vec<(f64, usize)> = (0..n_coalitions)
-                .into_par_iter()
-                .map(|idx| {
-                    let subset = get_coalition_subset(operators, bitmap, idx);
-                    let coalition_size = subset.len();
-
-                    let (row_mask, col_mask) = get_coalition_masks(&subset, primitives);
-                    let value = solve_single_coalition(primitives, &row_mask, &col_mask)
-                        .unwrap_or(f64::NEG_INFINITY);
-
-                    (value, coalition_size)
-                })
-                .collect();
-
-            for (idx, (value, coalition_size)) in results.into_iter().enumerate() {
-                svalue[idx] = value;
-                size[idx] = coalition_size;
-            }
-        } else {
-            // Sequential version
-            for idx in 0..n_coalitions {
+    if use_parallel {
+        // Parallel version
+        let results: Vec<(f64, usize)> = (0..n_coalitions)
+            .into_par_iter()
+            .map(|idx| {
                 let subset = get_coalition_subset(operators, bitmap, idx);
-                size[idx] = subset.len();
+                let coalition_size = subset.len();
 
                 let (row_mask, col_mask) = get_coalition_masks(&subset, primitives);
+                let value = solve_single_coalition(primitives, &row_mask, &col_mask)
+                    .unwrap_or(f64::NEG_INFINITY);
 
-                if let Some(value) = solve_single_coalition(primitives, &row_mask, &col_mask) {
-                    svalue[idx] = value;
-                }
+                (value, coalition_size)
+            })
+            .collect();
+
+        for (idx, (value, coalition_size)) in results.into_iter().enumerate() {
+            svalue[idx] = value;
+            size[idx] = coalition_size;
+        }
+    } else {
+        // Sequential version
+        for idx in 0..n_coalitions {
+            let subset = get_coalition_subset(operators, bitmap, idx);
+            size[idx] = subset.len();
+
+            let (row_mask, col_mask) = get_coalition_masks(&subset, primitives);
+
+            if let Some(value) = solve_single_coalition(primitives, &row_mask, &col_mask) {
+                svalue[idx] = value;
             }
         }
     }
 
     Ok((svalue, size))
-}
-
-/// Sampling-based approach for very large coalition counts (10+ operators)
-fn solve_coalition_values_sampled(
-    operators: &[String],
-    bitmap: &Mat<u8>,
-    primitives: &LPPrimitives,
-    svalue: &mut Col<f64>,
-    size: &mut Col<usize>,
-) -> Result<()> {
-    let n_ops = operators.len();
-    let n_coalitions = bitmap.ncols();
-
-    // Always compute empty and full coalitions
-    svalue[0] = 0.0;
-    size[0] = 0;
-
-    let full_idx = n_coalitions - 1;
-    let ops_refs: Vec<&str> = operators.iter().map(|s| s.as_str()).collect();
-    let (row_mask, col_mask) = get_coalition_masks(&ops_refs, primitives);
-    svalue[full_idx] =
-        solve_single_coalition(primitives, &row_mask, &col_mask).unwrap_or(f64::NEG_INFINITY);
-    size[full_idx] = n_ops;
-
-    // Stratified sampling: ensure we sample from each coalition size
-    let samples_per_size = match n_ops {
-        10..=12 => 50,
-        13..=15 => 30,
-        _ => 20,
-    };
-
-    // Group coalitions by size
-    let mut coalitions_by_size: Vec<Vec<usize>> = vec![vec![]; n_ops + 1];
-    for idx in 0..n_coalitions {
-        let coalition_size = (0..n_ops).filter(|&i| bitmap[(i, idx)] == 1).count();
-        coalitions_by_size[coalition_size].push(idx);
-    }
-
-    // Sample from each size (except empty and full which we already computed)
-    let sampled_results: Vec<(usize, f64, usize)> = (1..n_ops)
-        .into_par_iter()
-        .flat_map(|coalition_size| {
-            let mut local_rng = StdRng::seed_from_u64(42 + coalition_size as u64);
-            let coalitions = &coalitions_by_size[coalition_size];
-            let n_samples = samples_per_size.min(coalitions.len());
-
-            // Sample without replacement
-            let mut indices: Vec<usize> = coalitions.to_vec();
-            indices.sort_unstable();
-
-            (0..n_samples)
-                .map(move |_| {
-                    let idx = local_rng.gen_range(0..indices.len());
-                    let coalition_idx = indices.swap_remove(idx);
-
-                    let subset = get_coalition_subset(operators, bitmap, coalition_idx);
-                    let (row_mask, col_mask) = get_coalition_masks(&subset, primitives);
-                    let value = solve_single_coalition(primitives, &row_mask, &col_mask)
-                        .unwrap_or(f64::NEG_INFINITY);
-
-                    (coalition_idx, value, coalition_size)
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect();
-
-    // Fill in sampled values
-    for (idx, value, coalition_size) in sampled_results {
-        svalue[idx] = value;
-        size[idx] = coalition_size;
-    }
-
-    // Interpolate remaining values using nearest neighbors of same size
-    for (coalition_size, coalitions) in coalitions_by_size
-        .iter()
-        .enumerate()
-        .skip(1)
-        .take(n_ops - 1)
-    {
-        let known_values: Vec<(usize, f64)> = coalitions
-            .iter()
-            .filter_map(|&idx| {
-                if svalue[idx] > f64::NEG_INFINITY {
-                    Some((idx, svalue[idx]))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if known_values.is_empty() {
-            continue;
-        }
-
-        // For unsampled coalitions, use average of sampled ones of same size
-        let avg_value =
-            known_values.iter().map(|(_, v)| v).sum::<f64>() / known_values.len() as f64;
-
-        for &idx in coalitions {
-            if svalue[idx] == f64::NEG_INFINITY {
-                svalue[idx] = avg_value;
-                size[idx] = coalition_size;
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// Compute expected values accounting for operator downtime

@@ -9,7 +9,7 @@ use std::hint::black_box;
 /// Based on the example network structure to ensure validity
 fn generate_valid_test_network(n_operators: usize) -> (PrivateLinks, PublicLinks, DemandMatrix) {
     // Define city codes and switch suffixes
-    let cities = vec![
+    let cities = [
         "NYC", "LAX", "CHI", "DAL", "SEA", "BOS", "ATL", "DEN", "MIA", "PHX", "SFO", "DCA",
     ];
     let switch_suffix = "1";
@@ -99,10 +99,14 @@ fn generate_valid_test_network(n_operators: usize) -> (PrivateLinks, PublicLinks
     // Traffic type 1: from first city to multiple destinations
     if !cities_with_switches.is_empty() {
         let source_city = cities_with_switches[0];
-        for i in 1..cities_with_switches.len().min(4) {
+        for city in cities_with_switches
+            .iter()
+            .take(cities_with_switches.len().min(4))
+            .skip(1)
+        {
             demands.push(Demand::new(
                 source_city.to_string(),
-                cities_with_switches[i].to_string(),
+                city.to_string(),
                 dec!(5),
                 1,
             ));
@@ -111,11 +115,15 @@ fn generate_valid_test_network(n_operators: usize) -> (PrivateLinks, PublicLinks
         // If we have many operators, add a second traffic type with a different source
         if n_operators > 6 && cities_with_switches.len() > 2 {
             let second_source = cities_with_switches[cities_with_switches.len() - 1];
-            for i in 0..2.min(cities_with_switches.len() - 1) {
-                if cities_with_switches[i] != second_source {
+            for city in cities_with_switches
+                .iter()
+                .take(2.min(cities_with_switches.len() - 1))
+            {
+                // for i in 0..2.min(cities_with_switches.len() - 1) {
+                if *city != second_source {
                     demands.push(Demand::new(
                         second_source.to_string(),
-                        cities_with_switches[i].to_string(),
+                        city.to_string(),
                         dec!(3),
                         2, // Different traffic type
                     ));
@@ -136,15 +144,7 @@ fn benchmark_shapley_computation(c: &mut Criterion) {
     let mut group = c.benchmark_group("shapley_computation");
 
     // Configure sample size for different operator counts
-    // Reduce sample size for larger operator counts due to exponential complexity
-    let configs = vec![
-        (2, 100), // 2^2 = 4 coalitions
-        (4, 100), // 2^4 = 16 coalitions
-        (6, 50),  // 2^6 = 64 coalitions
-        (8, 20),  // 2^8 = 256 coalitions
-        (10, 10), // 2^10 = 1024 coalitions - uses sampling
-        (12, 10), // 2^12 = 4096 coalitions - uses sampling
-    ];
+    let configs = vec![(2, 100), (4, 100), (6, 50), (8, 20), (10, 10), (12, 10)];
 
     for (n_operators, sample_size) in configs {
         group.sample_size(sample_size);

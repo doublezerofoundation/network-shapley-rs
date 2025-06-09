@@ -2,6 +2,7 @@
 
 use rust_decimal::dec;
 use shapley::{DemandMatrix, NetworkShapleyBuilder, PrivateLinks, PublicLinks};
+use tabled::{Table, settings::Style};
 
 fn main() {
     let private_links =
@@ -16,14 +17,10 @@ fn main() {
         .compute()
         .expect("Failed to compute network shapley values");
 
-    println!("result1");
-    println!("  Operator     Value  Percent");
-    for (i, sv) in result1.iter().enumerate() {
-        println!(
-            "{} {:>8} {:>9.4} {:>8.4}",
-            i, sv.operator, sv.value, sv.percent
-        );
-    }
+    let t1 = Table::new(result1)
+        .with(Style::psql().remove_horizontals())
+        .to_string();
+    println!("result1:\n{}", t1);
 
     let demand2 = DemandMatrix::from_csv("tests/demand2.csv").expect("Failed to read demand2");
 
@@ -33,12 +30,8 @@ fn main() {
         .compute()
         .expect("Failed to compute network shapley values");
 
-    println!("result2");
-    println!("  Operator     Value  Percent");
-    for (i, sv) in result2.iter().enumerate() {
-        println!(
-            "{} {:>8} {:>9.4} {:>8.4}",
-            i, sv.operator, sv.value, sv.percent
-        );
-    }
+    let t2 = Table::new(result2)
+        .with(Style::psql().remove_horizontals())
+        .to_string();
+    println!("result2:\n{}", t2)
 }
