@@ -4,3 +4,11 @@
 .envrc
 .cargo/
 research/
+# Coverage files
+lcov.info
+*.profraw
+*.profdata
+coverage/
+tarpaulin-report.html
+cobertura.xml
+coverage.json
