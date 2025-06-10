@@ -1,6 +1,7 @@
 use crate::{
     error::ShapleyError,
-    types::{DemandMatrix, Link, Result, decimal_to_f64},
+    types::{DemandMatrix, Link, Result},
+    utils::decimal_to_f64,
 };
 use faer::{
     Col, Unbind,
@@ -367,17 +368,33 @@ fn select_columns(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LinkBuilder, types::Demand};
+    use crate::{DemandBuilder, LinkBuilder};
     use rust_decimal::dec;
 
     #[test]
     fn test_build_node_index() {
         let links = vec![
-            LinkBuilder::new("A".to_string(), "B".to_string()).build(),
-            LinkBuilder::new("B".to_string(), "C".to_string()).build(),
+            LinkBuilder::default()
+                .start("A".to_string())
+                .end("B".to_string())
+                .build()
+                .unwrap(),
+            LinkBuilder::default()
+                .start("B".to_string())
+                .end("C".to_string())
+                .build()
+                .unwrap(),
         ];
 
-        let demands = vec![Demand::new("A".to_string(), "C".to_string(), dec!(10), 1)];
+        let demands = vec![
+            DemandBuilder::default()
+                .start("A".to_string())
+                .end("C".to_string())
+                .traffic(dec!(10))
+                .demand_type(1)
+                .build()
+                .unwrap(),
+        ];
         let demand_matrix = DemandMatrix::from_demands(demands);
 
         let node_idx = build_node_index(&links, &demand_matrix);
@@ -391,11 +408,31 @@ mod tests {
     #[test]
     fn test_build_flow_constraints() {
         let links = vec![
-            { LinkBuilder::new("A".to_string(), "B".to_string()).build() },
-            { LinkBuilder::new("B".to_string(), "C".to_string()).build() },
+            {
+                LinkBuilder::default()
+                    .start("A".to_string())
+                    .end("B".to_string())
+                    .build()
+                    .unwrap()
+            },
+            {
+                LinkBuilder::default()
+                    .start("B".to_string())
+                    .end("C".to_string())
+                    .build()
+                    .unwrap()
+            },
         ];
 
-        let demands = vec![Demand::new("A".to_string(), "C".to_string(), dec!(10), 1)];
+        let demands = vec![
+            DemandBuilder::default()
+                .start("A".to_string())
+                .end("C".to_string())
+                .traffic(dec!(10))
+                .demand_type(1)
+                .build()
+                .unwrap(),
+        ];
         let demand_matrix = DemandMatrix::from_demands(demands);
 
         let node_idx = build_node_index(&links, &demand_matrix);
@@ -418,25 +455,34 @@ mod tests {
     fn test_build_bandwidth_constraints() {
         let links = vec![
             {
-                LinkBuilder::new("A".to_string(), "B".to_string())
+                LinkBuilder::default()
+                    .start("A".to_string())
+                    .end("B".to_string())
                     .shared(1)
                     .bandwidth(dec!(100))
                     .operator1("Op1".to_string())
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("B".to_string(), "C".to_string())
+                LinkBuilder::default()
+                    .start("B".to_string())
+                    .end("C".to_string())
                     .shared(1)
                     .bandwidth(dec!(100))
                     .operator1("Op1".to_string())
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("C".to_string(), "D".to_string())
+                LinkBuilder::default()
+                    .start("C".to_string())
+                    .end("D".to_string())
                     .shared(2)
                     .bandwidth(dec!(50))
                     .operator1("Op2".to_string())
                     .build()
+                    .unwrap()
             },
         ];
 
@@ -458,24 +504,33 @@ mod tests {
     fn test_extract_operator_indices() {
         let links = vec![
             {
-                LinkBuilder::new("A".to_string(), "B".to_string())
+                LinkBuilder::default()
+                    .start("A".to_string())
+                    .end("B".to_string())
                     .shared(1)
                     .operator1("Op1".to_string())
                     .operator2("Op1".to_string())
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("B".to_string(), "C".to_string())
+                LinkBuilder::default()
+                    .start("B".to_string())
+                    .end("C".to_string())
                     .shared(2)
                     .operator1("Op2".to_string())
                     .operator2("Op3".to_string())
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("C".to_string(), "D".to_string())
+                LinkBuilder::default()
+                    .start("C".to_string())
+                    .end("D".to_string())
                     .operator1("0".to_string())
                     .operator2("0".to_string())
                     .build()
+                    .unwrap()
             },
         ];
 
@@ -493,19 +548,28 @@ mod tests {
     fn test_build_objective_coefficients() {
         let links = vec![
             {
-                LinkBuilder::new("A".to_string(), "B".to_string())
+                LinkBuilder::default()
+                    .start("A".to_string())
+                    .end("B".to_string())
                     .cost(dec!(10))
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("B".to_string(), "C".to_string())
+                LinkBuilder::default()
+                    .start("B".to_string())
+                    .end("C".to_string())
                     .cost(dec!(20))
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("C".to_string(), "D".to_string())
+                LinkBuilder::default()
+                    .start("C".to_string())
+                    .end("D".to_string())
                     .cost(dec!(30))
                     .build()
+                    .unwrap()
             },
         ];
 

@@ -1,4 +1,7 @@
-use crate::types::{LPPrimitives, Link, Result, ShapleyValue, f64_to_decimal, round_decimal};
+use crate::{
+    types::{LPPrimitives, Link, Result, ShapleyValue},
+    utils::{f64_to_decimal, round_decimal},
+};
 use clarabel::algebra::*;
 use clarabel::solver::{DefaultSettingsBuilder, DefaultSolver, IPSolver, SolverStatus};
 use faer::{
@@ -541,21 +544,30 @@ mod tests {
     fn test_enumerate_operators() {
         let links = vec![
             {
-                LinkBuilder::new("A".to_string(), "B".to_string())
+                LinkBuilder::default()
+                    .start("A".to_string())
+                    .end("B".to_string())
                     .operator1("Alpha".to_string())
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("B".to_string(), "C".to_string())
+                LinkBuilder::default()
+                    .start("B".to_string())
+                    .end("C".to_string())
                     .operator1("Beta".to_string())
                     .operator2("Gamma".to_string())
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("C".to_string(), "D".to_string())
+                LinkBuilder::default()
+                    .start("C".to_string())
+                    .end("D".to_string())
                     .operator1("Alpha".to_string())
                     .operator2("Beta".to_string())
                     .build()
+                    .unwrap()
             },
         ];
 

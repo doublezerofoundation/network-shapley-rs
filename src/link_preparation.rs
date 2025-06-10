@@ -245,10 +245,13 @@ fn find_direct_paths(
     // Create direct path links
     let mut direct_links = Vec::new();
     for ((start, end), cost) in city_paths {
-        let link = LinkBuilder::new(start, end)
+        let link = LinkBuilder::default()
+            .start(start)
+            .end(end)
             .cost(cost)
             .link_type(traffic_type)
-            .build();
+            .build()
+            .unwrap();
         direct_links.push(link);
     }
 
@@ -272,10 +275,13 @@ fn create_source_helpers(
 
     let mut helpers = Vec::new();
     for switch in src_switches {
-        let link = LinkBuilder::new(src_city.to_string(), switch)
+        let link = LinkBuilder::default()
+            .start(src_city.to_string())
+            .end(switch)
             .cost(Decimal::ZERO)
             .link_type(traffic_type)
-            .build();
+            .build()
+            .unwrap();
         helpers.push(link);
     }
 
@@ -303,10 +309,13 @@ fn create_destination_helpers(
     let mut helpers = Vec::new();
     for switch in dst_switches.iter() {
         let city = &switch[..3];
-        let link = LinkBuilder::new(switch.to_string(), city.to_string())
+        let link = LinkBuilder::default()
+            .start(switch.to_string())
+            .end(city.to_string())
             .cost(Decimal::ZERO)
             .link_type(traffic_type)
-            .build();
+            .build()
+            .unwrap();
         helpers.push(link);
     }
 
@@ -315,6 +324,8 @@ fn create_destination_helpers(
 
 #[cfg(test)]
 mod tests {
+    use crate::types::DemandBuilder;
+
     use super::*;
     use rust_decimal::dec;
 
@@ -322,16 +333,21 @@ mod tests {
     fn test_prepare_private_links() {
         let mut links = vec![
             {
-                LinkBuilder::new("NYC1".to_string(), "LAX1".to_string())
+                LinkBuilder::default()
+                    .start("NYC1".to_string())
+                    .end("LAX1".to_string())
                     .cost(dec!(10))
                     .bandwidth(dec!(100))
                     .operator1("Op1".to_string())
                     .uptime(dec!(0.9))
                     .shared(0)
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("LAX1".to_string(), "CHI1".to_string())
+                LinkBuilder::default()
+                    .start("LAX1".to_string())
+                    .end("CHI1".to_string())
                     .cost(dec!(20))
                     .bandwidth(dec!(200))
                     .operator1("Op2".to_string())
@@ -339,6 +355,7 @@ mod tests {
                     .uptime(dec!(1.0))
                     .shared(1)
                     .build()
+                    .unwrap()
             },
         ];
 
@@ -371,14 +388,20 @@ mod tests {
     fn test_prepare_public_links() {
         let links = vec![
             {
-                LinkBuilder::new("NYC1".to_string(), "LAX1".to_string())
+                LinkBuilder::default()
+                    .start("NYC1".to_string())
+                    .end("LAX1".to_string())
                     .cost(dec!(50))
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("LAX1".to_string(), "CHI1".to_string())
+                LinkBuilder::default()
+                    .start("LAX1".to_string())
+                    .end("CHI1".to_string())
                     .cost(dec!(60))
                     .build()
+                    .unwrap()
             },
         ];
 
@@ -400,17 +423,32 @@ mod tests {
     #[test]
     fn test_generate_helper_links() {
         let public_links = vec![
-            LinkBuilder::new("NYC1".to_string(), "LAX1".to_string()).build(),
-            LinkBuilder::new("NYC2".to_string(), "LAX2".to_string()).build(),
-            LinkBuilder::new("LAX1".to_string(), "NYC1".to_string()).build(),
+            LinkBuilder::default()
+                .start("NYC1".to_string())
+                .end("LAX1".to_string())
+                .build()
+                .unwrap(),
+            LinkBuilder::default()
+                .start("NYC2".to_string())
+                .end("LAX2".to_string())
+                .build()
+                .unwrap(),
+            LinkBuilder::default()
+                .start("LAX1".to_string())
+                .end("NYC1".to_string())
+                .build()
+                .unwrap(),
         ];
 
-        let demands = vec![Demand::new(
-            "NYC".to_string(),
-            "LAX".to_string(),
-            dec!(10),
-            1,
-        )];
+        let demands = vec![
+            DemandBuilder::default()
+                .start("NYC".to_string())
+                .end("LAX".to_string())
+                .traffic(dec!(10))
+                .demand_type(1)
+                .build()
+                .unwrap(),
+        ];
         let demand_matrix = DemandMatrix::from_demands(demands);
 
         let result = generate_helper_links(&public_links, &demand_matrix).unwrap();
@@ -432,22 +470,31 @@ mod tests {
     #[test]
     fn test_merge_link_components() {
         let private_links = vec![{
-            LinkBuilder::new("NYC1".to_string(), "LAX1".to_string())
+            LinkBuilder::default()
+                .start("NYC1".to_string())
+                .end("LAX1".to_string())
                 .operator1("Op1".to_string())
                 .bandwidth(dec!(100))
                 .build()
+                .unwrap()
         }];
 
         let public_links = vec![{
-            LinkBuilder::new("NYC1".to_string(), "LAX1".to_string())
+            LinkBuilder::default()
+                .start("NYC1".to_string())
+                .end("LAX1".to_string())
                 .cost(dec!(50))
                 .build()
+                .unwrap()
         }];
 
         let helper_links = vec![{
-            LinkBuilder::new("NYC".to_string(), "NYC1".to_string())
+            LinkBuilder::default()
+                .start("NYC".to_string())
+                .end("NYC1".to_string())
                 .link_type(1)
                 .build()
+                .unwrap()
         }];
 
         let result =
@@ -472,26 +519,38 @@ mod tests {
     fn test_compact_shared_ids() {
         let mut links = vec![
             {
-                LinkBuilder::new("A".to_string(), "B".to_string())
+                LinkBuilder::default()
+                    .start("A".to_string())
+                    .end("B".to_string())
                     .shared(5)
                     .operator1("Op1".to_string())
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("B".to_string(), "C".to_string())
+                LinkBuilder::default()
+                    .start("B".to_string())
+                    .end("C".to_string())
                     .operator1("Op2".to_string())
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("C".to_string(), "D".to_string())
+                LinkBuilder::default()
+                    .start("C".to_string())
+                    .end("D".to_string())
                     .shared(10)
                     .operator1("Op3".to_string())
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("D".to_string(), "E".to_string())
+                LinkBuilder::default()
+                    .start("D".to_string())
+                    .end("E".to_string())
                     .operator1("Op4".to_string())
                     .build()
+                    .unwrap()
             },
         ];
 

@@ -4,26 +4,28 @@ use crate::{
         generate_coalition_bitmap, solve_coalition_values,
     },
     lp::{consolidate_map, primitives},
-    types::{DemandMatrix, PrivateLinks, PublicLinks, Result, ShapleyValue, decimal_to_f64},
+    types::{DemandMatrix, PrivateLinks, PublicLinks, Result, ShapleyValue},
+    utils::decimal_to_f64,
     validation::validate_operator_names,
 };
+use derive_builder::Builder;
 use faer::Par;
 use rust_decimal::{Decimal, dec};
 
+#[derive(Builder)]
 pub struct NetworkShapley {
     private_links: PrivateLinks,
     public_links: PublicLinks,
     demand: DemandMatrix,
+    #[builder(default = "dec!(0.98)")]
     operator_uptime: Decimal,
+    #[builder(default = "dec!(5.0)")]
     hybrid_penalty: Decimal,
+    #[builder(default = "dec!(1.0)")]
     demand_multiplier: Decimal,
 }
 
 impl NetworkShapley {
-    pub fn builder() -> NetworkShapleyBuilder {
-        NetworkShapleyBuilder::default()
-    }
-
     /// Compute Shapley values per operator
     pub fn compute(&self) -> Result<Vec<ShapleyValue>> {
         // Configure faer to use all available threads for matrix operations
@@ -58,62 +60,9 @@ impl NetworkShapley {
     }
 }
 
-#[derive(Default)]
-pub struct NetworkShapleyBuilder {
-    private_links: PrivateLinks,
-    public_links: PublicLinks,
-    demand: DemandMatrix,
-    operator_uptime: Decimal,
-    hybrid_penalty: Decimal,
-    demand_multiplier: Decimal,
-}
-
-impl NetworkShapleyBuilder {
-    pub fn new(
-        private_links: PrivateLinks,
-        public_links: PublicLinks,
-        demand: DemandMatrix,
-    ) -> Self {
-        Self {
-            private_links,
-            public_links,
-            demand,
-            operator_uptime: dec!(0.98),
-            hybrid_penalty: dec!(5.0),
-            demand_multiplier: dec!(1.0),
-        }
-    }
-
-    pub fn operator_uptime(mut self, operator_uptime: Decimal) -> NetworkShapleyBuilder {
-        self.operator_uptime = operator_uptime;
-        self
-    }
-
-    pub fn hybrid_penalty(mut self, hybrid_penalty: Decimal) -> NetworkShapleyBuilder {
-        self.hybrid_penalty = hybrid_penalty;
-        self
-    }
-
-    pub fn demand_multiplier(mut self, demand_multiplier: Decimal) -> NetworkShapleyBuilder {
-        self.demand_multiplier = demand_multiplier;
-        self
-    }
-
-    pub fn build(self) -> NetworkShapley {
-        NetworkShapley {
-            private_links: self.private_links,
-            public_links: self.public_links,
-            demand: self.demand,
-            operator_uptime: self.operator_uptime,
-            hybrid_penalty: self.hybrid_penalty,
-            demand_multiplier: self.demand_multiplier,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{LinkBuilder, lp};
+    use crate::{DemandBuilder, LinkBuilder, lp};
 
     use super::*;
     use rust_decimal::dec;
@@ -121,25 +70,34 @@ mod tests {
     fn create_example_private_links() -> PrivateLinks {
         let links = vec![
             {
-                LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+                LinkBuilder::default()
+                    .start("FRA1".to_string())
+                    .end("NYC1".to_string())
                     .cost(dec!(40))
                     .bandwidth(dec!(10))
                     .operator1("Alpha".to_string())
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+                LinkBuilder::default()
+                    .start("FRA1".to_string())
+                    .end("SIN1".to_string())
                     .cost(dec!(50))
                     .bandwidth(dec!(10))
                     .operator1("Beta".to_string())
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+                LinkBuilder::default()
+                    .start("SIN1".to_string())
+                    .end("NYC1".to_string())
                     .cost(dec!(80))
                     .bandwidth(dec!(10))
                     .operator1("Gamma".to_string())
                     .build()
+                    .unwrap()
             },
         ];
         PrivateLinks::from_links(links)
@@ -148,19 +106,28 @@ mod tests {
     fn create_example_public_links() -> PublicLinks {
         let links = vec![
             {
-                LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+                LinkBuilder::default()
+                    .start("FRA1".to_string())
+                    .end("NYC1".to_string())
                     .cost(dec!(70))
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+                LinkBuilder::default()
+                    .start("FRA1".to_string())
+                    .end("SIN1".to_string())
                     .cost(dec!(80))
                     .build()
+                    .unwrap()
             },
             {
-                LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+                LinkBuilder::default()
+                    .start("SIN1".to_string())
+                    .end("NYC1".to_string())
                     .cost(dec!(120))
                     .build()
+                    .unwrap()
             },
         ];
         PublicLinks::from_links(links)
@@ -168,8 +135,20 @@ mod tests {
 
     fn create_example_demand() -> DemandMatrix {
         let demands = vec![
-            crate::types::Demand::new("SIN".to_string(), "NYC".to_string(), dec!(5), 1),
-            crate::types::Demand::new("SIN".to_string(), "FRA".to_string(), dec!(5), 1),
+            DemandBuilder::default()
+                .start("SIN".to_string())
+                .end("NYC".to_string())
+                .traffic(dec!(5))
+                .demand_type(1)
+                .build()
+                .unwrap(),
+            DemandBuilder::default()
+                .start("SIN".to_string())
+                .end("FRA".to_string())
+                .traffic(dec!(5))
+                .demand_type(1)
+                .build()
+                .unwrap(),
         ];
         DemandMatrix::from_demands(demands)
     }
@@ -220,8 +199,12 @@ mod tests {
         let public_links = create_example_public_links();
         let demand = create_example_demand();
 
-        let result = NetworkShapleyBuilder::new(private_links, public_links, demand)
+        let result = NetworkShapleyBuilder::default()
+            .private_links(private_links)
+            .public_links(public_links)
+            .demand(demand)
             .build()
+            .unwrap()
             .compute()
             .unwrap();
 

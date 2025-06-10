@@ -14,9 +14,13 @@ fn test_csv_example_demand1() {
         PublicLinks::from_csv("tests/public_links.csv").expect("Failed to read public links");
     let demand1 = DemandMatrix::from_csv("tests/demand1.csv").expect("Failed to read demand1");
 
-    let result1 = NetworkShapleyBuilder::new(private_links, public_links, demand1)
+    let result1 = NetworkShapleyBuilder::default()
+        .private_links(private_links)
+        .public_links(public_links)
+        .demand(demand1)
         .demand_multiplier(dec!(1.2))
         .build()
+        .unwrap()
         .compute()
         .expect("Failed to compute network shapley values");
 
@@ -96,9 +100,13 @@ fn test_csv_example_demand2() {
         PublicLinks::from_csv("tests/public_links.csv").expect("Failed to read public links");
     let demand2 = DemandMatrix::from_csv("tests/demand2.csv").expect("Failed to read demand2");
 
-    let result2 = NetworkShapleyBuilder::new(private_links, public_links, demand2)
+    let result2 = NetworkShapleyBuilder::default()
+        .private_links(private_links)
+        .public_links(public_links)
+        .demand(demand2)
         .demand_multiplier(dec!(1.2))
         .build()
+        .unwrap()
         .compute()
         .expect("Failed to compute network shapley values");
 

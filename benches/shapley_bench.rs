@@ -1,7 +1,7 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rust_decimal::dec;
 use shapley::{
-    Demand, DemandMatrix, LinkBuilder, NetworkShapleyBuilder, PrivateLinks, PublicLinks, lp,
+    DemandBuilder, DemandMatrix, LinkBuilder, NetworkShapleyBuilder, PrivateLinks, PublicLinks, lp,
 };
 use std::hint::black_box;
 
@@ -25,14 +25,14 @@ fn generate_valid_test_network(n_operators: usize) -> (PrivateLinks, PublicLinks
         let from_idx = i % cities.len();
         let to_idx = (i + 1) % cities.len();
 
-        let link = LinkBuilder::new(
-            format!("{}{}", cities[from_idx], switch_suffix),
-            format!("{}{}", cities[to_idx], switch_suffix),
-        )
-        .cost(dec!(40) + dec!(10) * rust_decimal::Decimal::from(i as i32))
-        .bandwidth(dec!(10))
-        .operator1(operator_names[i % n_operators].clone())
-        .build();
+        let link = LinkBuilder::default()
+            .start(format!("{}{}", cities[from_idx], switch_suffix))
+            .end(format!("{}{}", cities[to_idx], switch_suffix))
+            .cost(dec!(40) + dec!(10) * rust_decimal::Decimal::from(i as i32))
+            .bandwidth(dec!(10))
+            .operator1(operator_names[i % n_operators].clone())
+            .build()
+            .unwrap();
 
         private_links.push(link);
     }
@@ -43,15 +43,15 @@ fn generate_valid_test_network(n_operators: usize) -> (PrivateLinks, PublicLinks
             let from_idx = i;
             let to_idx = (i + 2) % cities.len();
 
-            let link = LinkBuilder::new(
-                format!("{}{}", cities[from_idx], switch_suffix),
-                format!("{}{}", cities[to_idx], switch_suffix),
-            )
-            .cost(dec!(60) + dec!(5) * rust_decimal::Decimal::from(i as i32))
-            .bandwidth(dec!(8))
-            .operator1(operator_names[(i + 1) % n_operators].clone())
-            .uptime(dec!(0.98))
-            .build();
+            let link = LinkBuilder::default()
+                .start(format!("{}{}", cities[from_idx], switch_suffix))
+                .end(format!("{}{}", cities[to_idx], switch_suffix))
+                .cost(dec!(60) + dec!(5) * rust_decimal::Decimal::from(i as i32))
+                .bandwidth(dec!(8))
+                .operator1(operator_names[(i + 1) % n_operators].clone())
+                .uptime(dec!(0.98))
+                .build()
+                .unwrap();
 
             private_links.push(link);
         }
@@ -76,12 +76,12 @@ fn generate_valid_test_network(n_operators: usize) -> (PrivateLinks, PublicLinks
 
     for i in 0..cities_vec.len() {
         for j in (i + 1)..cities_vec.len() {
-            let link = LinkBuilder::new(
-                format!("{}{}", cities_vec[i], switch_suffix),
-                format!("{}{}", cities_vec[j], switch_suffix),
-            )
-            .cost(dec!(70) + dec!(10) * rust_decimal::Decimal::from((j - i) as i32))
-            .build();
+            let link = LinkBuilder::default()
+                .start(format!("{}{}", cities_vec[i], switch_suffix))
+                .end(format!("{}{}", cities_vec[j], switch_suffix))
+                .cost(dec!(70) + dec!(10) * rust_decimal::Decimal::from((j - i) as i32))
+                .build()
+                .unwrap();
 
             public_links.push(link);
         }
@@ -104,12 +104,15 @@ fn generate_valid_test_network(n_operators: usize) -> (PrivateLinks, PublicLinks
             .take(cities_with_switches.len().min(4))
             .skip(1)
         {
-            demands.push(Demand::new(
-                source_city.to_string(),
-                city.to_string(),
-                dec!(5),
-                1,
-            ));
+            demands.push(
+                DemandBuilder::default()
+                    .start(source_city.to_string())
+                    .end(city.to_string())
+                    .traffic(dec!(5))
+                    .demand_type(1)
+                    .build()
+                    .unwrap(),
+            );
         }
 
         // If we have many operators, add a second traffic type with a different source
@@ -121,12 +124,15 @@ fn generate_valid_test_network(n_operators: usize) -> (PrivateLinks, PublicLinks
             {
                 // for i in 0..2.min(cities_with_switches.len() - 1) {
                 if *city != second_source {
-                    demands.push(Demand::new(
-                        second_source.to_string(),
-                        city.to_string(),
-                        dec!(3),
-                        2, // Different traffic type
-                    ));
+                    demands.push(
+                        DemandBuilder::default()
+                            .start(second_source.to_string())
+                            .end(city.to_string())
+                            .traffic(dec!(3))
+                            .demand_type(2)
+                            .build()
+                            .unwrap(),
+                    );
                 }
             }
         }
@@ -156,16 +162,16 @@ fn benchmark_shapley_computation(c: &mut Criterion) {
             &n_operators,
             |b, _| {
                 b.iter(|| {
-                    NetworkShapleyBuilder::new(
-                        black_box(private_links.clone()),
-                        black_box(public_links.clone()),
-                        black_box(demand.clone()),
-                    )
-                    .operator_uptime(black_box(dec!(0.98)))
-                    .hybrid_penalty(black_box(dec!(5.0)))
-                    .demand_multiplier(black_box(dec!(1.0)))
-                    .build()
-                    .compute()
+                    NetworkShapleyBuilder::default()
+                        .private_links(black_box(private_links.clone()))
+                        .public_links(black_box(public_links.clone()))
+                        .demand(black_box(demand.clone()))
+                        .operator_uptime(black_box(dec!(0.98)))
+                        .hybrid_penalty(black_box(dec!(5.0)))
+                        .demand_multiplier(black_box(dec!(1.0)))
+                        .build()
+                        .unwrap()
+                        .compute()
                 })
             },
         );
@@ -237,28 +243,31 @@ fn benchmark_network_complexity(c: &mut Criterion) {
 
         // Create demands up to n_demands
         for i in 1..((*n_demands).min(cities.len())) {
-            demands.push(Demand::new(
-                cities[0].to_string(),
-                cities[i].to_string(),
-                dec!(5) + rust_decimal::Decimal::from(i as i32),
-                1,
-            ));
+            demands.push(
+                DemandBuilder::default()
+                    .start(cities[0].to_string())
+                    .end(cities[i].to_string())
+                    .traffic(dec!(5) + rust_decimal::Decimal::from(i as i32))
+                    .demand_type(1)
+                    .build()
+                    .unwrap(),
+            );
         }
 
         let demand_matrix = DemandMatrix::from_demands(demands);
 
         group.bench_with_input(BenchmarkId::new("demands", n_demands), n_demands, |b, _| {
             b.iter(|| {
-                NetworkShapleyBuilder::new(
-                    black_box(private_links.clone()),
-                    black_box(public_links.clone()),
-                    black_box(demand_matrix.clone()),
-                )
-                .operator_uptime(black_box(dec!(0.98)))
-                .hybrid_penalty(black_box(dec!(5.0)))
-                .demand_multiplier(black_box(dec!(1.0)))
-                .build()
-                .compute()
+                NetworkShapleyBuilder::default()
+                    .private_links(black_box(private_links.clone()))
+                    .public_links(black_box(public_links.clone()))
+                    .demand(black_box(demand_matrix.clone()))
+                    .operator_uptime(black_box(dec!(0.98)))
+                    .hybrid_penalty(black_box(dec!(5.0)))
+                    .demand_multiplier(black_box(dec!(1.0)))
+                    .build()
+                    .unwrap()
+                    .compute()
             })
         });
     }
@@ -273,63 +282,93 @@ fn benchmark_example(c: &mut Criterion) {
     // Create the exact example from the code
     let private_links = PrivateLinks::from_links(vec![
         {
-            LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+            LinkBuilder::default()
+                .start("FRA1".to_string())
+                .end("NYC1".to_string())
                 .cost(dec!(40))
                 .bandwidth(dec!(10))
                 .operator1("Alpha".to_string())
                 .build()
+                .unwrap()
         },
         {
-            LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+            LinkBuilder::default()
+                .start("FRA1".to_string())
+                .end("SIN1".to_string())
                 .cost(dec!(50))
                 .bandwidth(dec!(10))
                 .operator1("Beta".to_string())
                 .build()
+                .unwrap()
         },
         {
-            LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+            LinkBuilder::default()
+                .start("SIN1".to_string())
+                .end("NYC1".to_string())
                 .cost(dec!(80))
                 .bandwidth(dec!(10))
                 .operator1("Gamma".to_string())
                 .build()
+                .unwrap()
         },
     ]);
 
     let public_links = PublicLinks::from_links(vec![
         {
-            LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+            LinkBuilder::default()
+                .start("FRA1".to_string())
+                .end("NYC1".to_string())
                 .cost(dec!(70))
                 .build()
+                .unwrap()
         },
         {
-            LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+            LinkBuilder::default()
+                .start("FRA1".to_string())
+                .end("SIN1".to_string())
                 .cost(dec!(80))
                 .build()
+                .unwrap()
         },
         {
-            LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+            LinkBuilder::default()
+                .start("SIN1".to_string())
+                .end("NYC1".to_string())
                 .cost(dec!(120))
                 .build()
+                .unwrap()
         },
     ]);
 
     let demand = DemandMatrix::from_demands(vec![
-        Demand::new("SIN".to_string(), "NYC".to_string(), dec!(5), 1),
-        Demand::new("SIN".to_string(), "FRA".to_string(), dec!(5), 1),
+        DemandBuilder::default()
+            .start("SIN".to_string())
+            .end("NYC".to_string())
+            .traffic(dec!(5))
+            .demand_type(1)
+            .build()
+            .unwrap(),
+        DemandBuilder::default()
+            .start("SIN".to_string())
+            .end("FRA".to_string())
+            .traffic(dec!(5))
+            .demand_type(1)
+            .build()
+            .unwrap(),
     ]);
 
     group.bench_function("reference_example", |b| {
         b.iter(|| {
-            NetworkShapleyBuilder::new(
-                black_box(private_links.clone()),
-                black_box(public_links.clone()),
-                black_box(demand.clone()),
-            )
-            .operator_uptime(black_box(dec!(0.98)))
-            .hybrid_penalty(black_box(dec!(5.0)))
-            .demand_multiplier(black_box(dec!(1.0)))
-            .build()
-            .compute()
+            NetworkShapleyBuilder::default()
+                .private_links(black_box(private_links.clone()))
+                .public_links(black_box(public_links.clone()))
+                .demand(black_box(demand.clone()))
+                .operator_uptime(black_box(dec!(0.98)))
+                .hybrid_penalty(black_box(dec!(5.0)))
+                .demand_multiplier(black_box(dec!(1.0)))
+                .build()
+                .unwrap()
+                .compute()
         })
     });
 

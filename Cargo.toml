@@ -12,6 +12,7 @@ name = "simulated"
 
 [dependencies]
 clarabel = "0"
+derive_builder = "0"
 faer = "0"
 itertools = "0"
 rayon = "1"

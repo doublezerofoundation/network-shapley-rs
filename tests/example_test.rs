@@ -1,6 +1,6 @@
 use rust_decimal::dec;
 use shapley::{
-    Demand, DemandMatrix, LinkBuilder, NetworkShapleyBuilder, PrivateLinks, PublicLinks,
+    DemandBuilder, DemandMatrix, LinkBuilder, NetworkShapleyBuilder, PrivateLinks, PublicLinks,
 };
 
 #[test]
@@ -8,53 +8,87 @@ fn test_example_run_output() {
     // This test verifies the output matches the Python example_run.py
     let private_links = PrivateLinks::from_links(vec![
         {
-            LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+            LinkBuilder::default()
+                .start("FRA1".to_string())
+                .end("NYC1".to_string())
                 .cost(dec!(40))
                 .bandwidth(dec!(10))
                 .operator1("Alpha".to_string())
                 .build()
+                .unwrap()
         },
         {
-            LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+            LinkBuilder::default()
+                .start("FRA1".to_string())
+                .end("SIN1".to_string())
                 .cost(dec!(50))
                 .bandwidth(dec!(10))
                 .operator1("Beta".to_string())
                 .build()
+                .unwrap()
         },
         {
-            LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+            LinkBuilder::default()
+                .start("SIN1".to_string())
+                .end("NYC1".to_string())
                 .cost(dec!(80))
                 .bandwidth(dec!(10))
                 .operator1("Gamma".to_string())
                 .build()
+                .unwrap()
         },
     ]);
 
     let public_links = PublicLinks::from_links(vec![
         {
-            LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+            LinkBuilder::default()
+                .start("FRA1".to_string())
+                .end("NYC1".to_string())
                 .cost(dec!(70))
                 .build()
+                .unwrap()
         },
         {
-            LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+            LinkBuilder::default()
+                .start("FRA1".to_string())
+                .end("SIN1".to_string())
                 .cost(dec!(80))
                 .build()
+                .unwrap()
         },
         {
-            LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+            LinkBuilder::default()
+                .start("SIN1".to_string())
+                .end("NYC1".to_string())
                 .cost(dec!(120))
                 .build()
+                .unwrap()
         },
     ]);
 
     let demand = DemandMatrix::from_demands(vec![
-        Demand::new("SIN".to_string(), "NYC".to_string(), dec!(5), 1),
-        Demand::new("SIN".to_string(), "FRA".to_string(), dec!(5), 1),
+        DemandBuilder::default()
+            .start("SIN".to_string())
+            .end("NYC".to_string())
+            .traffic(dec!(5))
+            .demand_type(1)
+            .build()
+            .unwrap(),
+        DemandBuilder::default()
+            .start("SIN".to_string())
+            .end("FRA".to_string())
+            .traffic(dec!(5))
+            .demand_type(1)
+            .build()
+            .unwrap(),
     ]);
 
-    let result = NetworkShapleyBuilder::new(private_links, public_links, demand)
+    let result = NetworkShapleyBuilder::default()
+        .private_links(private_links)
+        .public_links(public_links)
+        .demand(demand)
         .build()
+        .unwrap()
         .compute()
         .unwrap();
     println!("result: {:#?}", result);

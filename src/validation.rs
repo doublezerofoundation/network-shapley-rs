@@ -154,7 +154,7 @@ fn has_digit(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LinkBuilder, types::Demand};
+    use crate::{DemandBuilder, LinkBuilder};
     use rust_decimal::prelude::*;
 
     #[test]
@@ -175,7 +175,11 @@ mod tests {
     #[test]
     fn test_validate_switch_naming() {
         // Valid switches (with digits)
-        let mut link = LinkBuilder::new("NYC1".to_string(), "LAX1".to_string()).build();
+        let mut link = LinkBuilder::default()
+            .start("NYC1".to_string())
+            .end("LAX1".to_string())
+            .build()
+            .unwrap();
         let links = vec![link.clone()];
         assert!(validate_switch_naming(&links, "private").is_ok());
 
@@ -201,22 +205,28 @@ mod tests {
     #[test]
     fn test_validate_endpoint_naming() {
         // Valid endpoints (no digits)
-        let demands = vec![Demand::new(
-            "NYC".to_string(),
-            "LAX".to_string(),
-            Decimal::from(10),
-            1,
-        )];
+        let demands = vec![
+            DemandBuilder::default()
+                .start("NYC".to_string())
+                .end("LAX".to_string())
+                .traffic(Decimal::from(10))
+                .demand_type(1)
+                .build()
+                .unwrap(),
+        ];
         let matrix = DemandMatrix::from_demands(demands);
         assert!(validate_endpoint_naming(&matrix).is_ok());
 
         // Invalid endpoints (with digits)
-        let demands = vec![Demand::new(
-            "NYC1".to_string(),
-            "LAX".to_string(),
-            Decimal::from(10),
-            1,
-        )];
+        let demands = vec![
+            DemandBuilder::default()
+                .start("NYC1".to_string())
+                .end("LAX".to_string())
+                .traffic(Decimal::from(10))
+                .demand_type(1)
+                .build()
+                .unwrap(),
+        ];
         let matrix = DemandMatrix::from_demands(demands);
         assert!(matches!(
             validate_endpoint_naming(&matrix),
@@ -228,17 +238,47 @@ mod tests {
     fn test_validate_traffic_types() {
         // Valid - single source per type
         let demands = vec![
-            Demand::new("NYC".to_string(), "LAX".to_string(), Decimal::from(10), 1),
-            Demand::new("NYC".to_string(), "CHI".to_string(), Decimal::from(20), 1),
-            Demand::new("LAX".to_string(), "CHI".to_string(), Decimal::from(30), 2),
+            DemandBuilder::default()
+                .start("NYC".to_string())
+                .end("LAX".to_string())
+                .traffic(Decimal::from(10))
+                .demand_type(1)
+                .build()
+                .unwrap(),
+            DemandBuilder::default()
+                .start("NYC".to_string())
+                .end("CHI".to_string())
+                .traffic(Decimal::from(20))
+                .demand_type(1)
+                .build()
+                .unwrap(),
+            DemandBuilder::default()
+                .start("LAX".to_string())
+                .end("CHI".to_string())
+                .traffic(Decimal::from(30))
+                .demand_type(2)
+                .build()
+                .unwrap(),
         ];
         let matrix = DemandMatrix::from_demands(demands);
         assert!(validate_traffic_types(&matrix).is_ok());
 
         // Invalid - multiple sources for type 1
         let demands = vec![
-            Demand::new("NYC".to_string(), "LAX".to_string(), Decimal::from(10), 1),
-            Demand::new("CHI".to_string(), "LAX".to_string(), Decimal::from(20), 1),
+            DemandBuilder::default()
+                .start("NYC".to_string())
+                .end("LAX".to_string())
+                .traffic(Decimal::from(10))
+                .demand_type(1)
+                .build()
+                .unwrap(),
+            DemandBuilder::default()
+                .start("CHI".to_string())
+                .end("LAX".to_string())
+                .traffic(Decimal::from(20))
+                .demand_type(1)
+                .build()
+                .unwrap(),
         ];
         let matrix = DemandMatrix::from_demands(demands);
         assert!(matches!(
@@ -250,29 +290,49 @@ mod tests {
     #[test]
     fn test_validate_public_pathway_coverage() {
         // Setup private links
-        let private_link = LinkBuilder::new("NYC1".to_string(), "LAX1".to_string())
+        let private_link = LinkBuilder::default()
+            .start("NYC1".to_string())
+            .end("LAX1".to_string())
             .operator1("Op1".to_string())
-            .build();
+            .build()
+            .unwrap();
         let private_links = vec![private_link];
 
         // Valid public coverage
         let public_links = vec![
-            LinkBuilder::new("NYC1".to_string(), "LAX1".to_string()).build(),
-            LinkBuilder::new("LAX1".to_string(), "NYC1".to_string()).build(),
+            LinkBuilder::default()
+                .start("NYC1".to_string())
+                .end("LAX1".to_string())
+                .build()
+                .unwrap(),
+            LinkBuilder::default()
+                .start("LAX1".to_string())
+                .end("NYC1".to_string())
+                .build()
+                .unwrap(),
         ];
 
-        let demands = vec![Demand::new(
-            "NYC".to_string(),
-            "LAX".to_string(),
-            Decimal::from(10),
-            1,
-        )];
+        let demands = vec![
+            DemandBuilder::default()
+                .start("NYC".to_string())
+                .end("LAX".to_string())
+                .traffic(Decimal::from(10))
+                .demand_type(1)
+                .build()
+                .unwrap(),
+        ];
         let matrix = DemandMatrix::from_demands(demands);
 
         assert!(validate_public_pathway_coverage(&private_links, &public_links, &matrix).is_ok());
 
         // Missing switch coverage
-        let public_links = vec![LinkBuilder::new("NYC1".to_string(), "CHI1".to_string()).build()];
+        let public_links = vec![
+            LinkBuilder::default()
+                .start("NYC1".to_string())
+                .end("CHI1".to_string())
+                .build()
+                .unwrap(),
+        ];
         assert!(matches!(
             validate_public_pathway_coverage(&private_links, &public_links, &matrix),
             Err(ShapleyError::IncompletePublicPathway { .. })
@@ -280,15 +340,26 @@ mod tests {
 
         // Missing demand coverage
         let public_links = vec![
-            LinkBuilder::new("NYC1".to_string(), "LAX1".to_string()).build(),
-            LinkBuilder::new("LAX1".to_string(), "NYC1".to_string()).build(),
+            LinkBuilder::default()
+                .start("NYC1".to_string())
+                .end("LAX1".to_string())
+                .build()
+                .unwrap(),
+            LinkBuilder::default()
+                .start("LAX1".to_string())
+                .end("NYC1".to_string())
+                .build()
+                .unwrap(),
         ];
-        let demands = vec![Demand::new(
-            "NYC".to_string(),
-            "CHI".to_string(),
-            Decimal::from(10),
-            1,
-        )];
+        let demands = vec![
+            DemandBuilder::default()
+                .start("NYC".to_string())
+                .end("CHI".to_string())
+                .traffic(Decimal::from(10))
+                .demand_type(1)
+                .build()
+                .unwrap(),
+        ];
         let matrix = DemandMatrix::from_demands(demands);
         assert!(matches!(
             validate_public_pathway_coverage(&private_links, &public_links, &matrix),

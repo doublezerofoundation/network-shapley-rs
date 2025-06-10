@@ -1,91 +1,105 @@
-//! A minimal, self-contained demonstration of the network_shapley() function.
-//!
-//! Run:
-//! cargo run --example example
-//!
-//! Output:
-//!
-//! Shapley results:
-//!
-//! Operator    Value  Percent
-//!    Alpha  24.9704   0.0722
-//!     Beta 171.9704   0.4972
-//!    Gamma 148.9404   0.4306
-
 use rust_decimal::dec;
 use shapley::{
-    Demand, DemandMatrix, LinkBuilder, NetworkShapleyBuilder, PrivateLinks, PublicLinks,
+    DemandMatrix, LinkBuilder, NetworkShapleyBuilder, PrivateLinks, PublicLinks, error::Result,
+    types::DemandBuilder,
 };
 
-fn build_sample_inputs() -> (PrivateLinks, PublicLinks, DemandMatrix) {
+fn build_sample_inputs() -> Result<(PrivateLinks, PublicLinks, DemandMatrix)> {
     // Private links
     let private_links = PrivateLinks::from_links(vec![
         {
-            LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+            LinkBuilder::default()
+                .start("FRA1".to_string())
+                .end("NYC1".to_string())
                 .cost(dec!(40))
                 .bandwidth(dec!(10))
                 .operator1("Alpha".to_string())
-                .build()
+                .build()?
         },
         {
-            LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+            LinkBuilder::default()
+                .start("FRA1".to_string())
+                .end("SIN1".to_string())
                 .cost(dec!(50))
                 .bandwidth(dec!(10))
                 .operator1("Beta".to_string())
-                .build()
+                .build()?
         },
         {
-            LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+            LinkBuilder::default()
+                .start("SIN1".to_string())
+                .end("NYC1".to_string())
                 .cost(dec!(80))
                 .bandwidth(dec!(10))
                 .operator1("Gamma".to_string())
-                .build()
+                .build()?
         },
     ]);
 
     // Public links
     let public_links = PublicLinks::from_links(vec![
         {
-            LinkBuilder::new("FRA1".to_string(), "NYC1".to_string())
+            LinkBuilder::default()
+                .start("FRA1".to_string())
+                .end("NYC1".to_string())
                 .cost(dec!(70))
-                .build()
+                .build()?
         },
         {
-            LinkBuilder::new("FRA1".to_string(), "SIN1".to_string())
+            LinkBuilder::default()
+                .start("FRA1".to_string())
+                .end("SIN1".to_string())
                 .cost(dec!(80))
-                .build()
+                .build()?
         },
         {
-            LinkBuilder::new("SIN1".to_string(), "NYC1".to_string())
+            LinkBuilder::default()
+                .start("SIN1".to_string())
+                .end("NYC1".to_string())
                 .cost(dec!(120))
-                .build()
+                .build()?
         },
     ]);
 
     // Demand
     let demand = DemandMatrix::from_demands(vec![
-        Demand::new("SIN".to_string(), "NYC".to_string(), dec!(5), 1),
-        Demand::new("SIN".to_string(), "FRA".to_string(), dec!(5), 1),
+        DemandBuilder::default()
+            .start("SIN".to_string())
+            .end("NYC".to_string())
+            .traffic(dec!(5))
+            .demand_type(1)
+            .build()
+            .unwrap(),
+        DemandBuilder::default()
+            .start("SIN".to_string())
+            .end("FRA".to_string())
+            .traffic(dec!(5))
+            .demand_type(1)
+            .build()
+            .unwrap(),
     ]);
 
-    (private_links, public_links, demand)
+    Ok((private_links, public_links, demand))
 }
 
-fn main() {
-    let (private_links, public_links, demand) = build_sample_inputs();
-    let result = NetworkShapleyBuilder::new(private_links, public_links, demand)
-        .build()
-        .compute();
-    match result {
-        Ok(shapley_values) => {
-            println!("\nShapley results:\n");
-            println!("{:>9}  {:>9}  {:>9}", "Operator", "Value", "Percent");
-            for sv in shapley_values {
-                println!("{:>9}  {:>9}  {:>9}", sv.operator, sv.value, sv.percent);
-            }
-        }
-        Err(e) => {
-            eprintln!("Error computing Shapley values: {}", e);
-        }
+fn main() -> Result<()> {
+    let (private_links, public_links, demand) = build_sample_inputs()?;
+    let result = NetworkShapleyBuilder::default()
+        .private_links(private_links)
+        .public_links(public_links)
+        .demand(demand)
+        .build()?
+        .compute()?;
+
+    println!("{:>9}  {:>9}  {:>9}", "Operator", "Value", "Percent");
+    for sv in result {
+        println!(
+            "{:>9}  {:>9}  {:>9.2}%",
+            sv.operator,
+            sv.value,
+            sv.percent * dec!(100)
+        );
     }
+
+    Ok(())
 }

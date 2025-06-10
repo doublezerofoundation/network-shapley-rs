@@ -1,3 +1,7 @@
+use crate::{
+    network_shapley::NetworkShapleyBuilderError,
+    types::{DemandBuilderError, LinkBuilderError},
+};
 use thiserror::Error;
 
 /// Error types for the Shapley computation system
@@ -52,6 +56,15 @@ pub enum ShapleyError {
     /// Decimal conversion error
     #[error("Decimal conversion error: {0}")]
     DecimalError(#[from] rust_decimal::Error),
+
+    #[error("NetworkShapley configuration build error: {0}")]
+    NetworkShapleyBuild(#[from] NetworkShapleyBuilderError),
+
+    #[error("Link configuration build error: {0}")]
+    LinkBuild(#[from] LinkBuilderError),
+
+    #[error("Demand configuration build error: {0}")]
+    DemandBuild(#[from] DemandBuilderError),
 
     /// Generic computation error
     #[error("Computation error: {0}")]

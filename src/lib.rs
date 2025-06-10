@@ -10,12 +10,13 @@ pub mod lp;
 pub mod lp_construction;
 pub mod network_shapley;
 pub mod types;
+pub mod utils;
 pub mod validation;
 
 // Re-export main types and functions
 pub use error::{Result, ShapleyError};
 pub use network_shapley::{NetworkShapley, NetworkShapleyBuilder};
 pub use types::{
-    Demand, DemandMatrix, Link, LinkBuilder, PrivateLinks, PublicLinks, ShapleyValue,
-    decimal_to_f64, f64_to_decimal, round_decimal,
+    Demand, DemandBuilder, DemandMatrix, Link, LinkBuilder, PrivateLinks, PublicLinks, ShapleyValue,
 };
+pub use utils::{decimal_to_f64, f64_to_decimal, round_decimal};

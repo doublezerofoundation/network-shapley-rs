@@ -1,117 +1,40 @@
+use derive_builder::Builder;
 use faer::{Col, sparse::SparseColMat};
-use rust_decimal::{
-    Decimal,
-    prelude::{FromPrimitive, ToPrimitive},
-};
+use rust_decimal::Decimal;
 
 #[cfg(feature = "csv")]
-use serde::{Deserialize, Serialize};
-#[cfg(feature = "csv")]
-use tabled::Tabled;
+use {
+    rust_decimal::dec,
+    serde::{Deserialize, Serialize},
+    tabled::Tabled,
+};
 
 pub type Result<T> = std::result::Result<T, crate::error::ShapleyError>;
 
-#[derive(Default, Debug, Clone, PartialEq)]
-pub struct LinkBuilder {
-    pub start: String,
-    pub end: String,
-    pub cost: Decimal,
-    pub bandwidth: Decimal,
-    pub operator1: String,
-    pub operator2: String,
-    pub uptime: Decimal,
-    pub shared: usize,
-    pub link_type: usize,
-}
-
-impl LinkBuilder {
-    pub fn new(start: String, end: String) -> Self {
-        Self {
-            start,
-            end,
-            cost: Decimal::ZERO,
-            bandwidth: Decimal::ZERO,
-            operator1: String::from("0"),
-            operator2: String::from("0"),
-            uptime: Decimal::ONE,
-            shared: 0,
-            link_type: 0,
-        }
-    }
-
-    pub fn build(self) -> Link {
-        Link {
-            start: self.start,
-            end: self.end,
-            cost: self.cost,
-            bandwidth: self.bandwidth,
-            operator1: self.operator1,
-            operator2: self.operator2,
-            uptime: self.uptime,
-            shared: self.shared,
-            link_type: self.link_type,
-        }
-    }
-
-    pub fn cost(mut self, cost: Decimal) -> Self {
-        self.cost = cost;
-        self
-    }
-
-    pub fn bandwidth(mut self, bandwidth: Decimal) -> Self {
-        self.bandwidth = bandwidth;
-        self
-    }
-
-    pub fn operator1(mut self, operator1: String) -> Self {
-        self.operator1 = operator1;
-        self
-    }
-
-    pub fn operator2(mut self, operator2: String) -> Self {
-        self.operator2 = operator2;
-        self
-    }
-
-    pub fn uptime(mut self, uptime: Decimal) -> Self {
-        self.uptime = uptime;
-        self
-    }
-
-    pub fn shared(mut self, shared: usize) -> Self {
-        self.shared = shared;
-        self
-    }
-
-    pub fn link_type(mut self, link_type: usize) -> Self {
-        self.link_type = link_type;
-        self
-    }
-}
-
 /// Represents a network link between two nodes
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Builder)]
 #[cfg_attr(feature = "csv", derive(Serialize, Deserialize))]
 pub struct Link {
     pub start: String,
     pub end: String,
+    #[builder(default = "Decimal::ZERO")]
     pub cost: Decimal,
+    #[builder(default = "Decimal::ZERO")]
     pub bandwidth: Decimal,
+    #[builder(default = "0.to_string()")]
     pub operator1: String,
+    #[builder(default = "0.to_string()")]
     pub operator2: String,
+    #[builder(default = "Decimal::ONE")]
     pub uptime: Decimal,
+    #[builder(default = "0")]
     pub shared: usize,
+    #[builder(default = "0")]
     pub link_type: usize,
 }
 
-impl Link {
-    pub fn builder() -> LinkBuilder {
-        LinkBuilder::default()
-    }
-}
-
 /// Represents traffic demand between two endpoints
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Builder)]
 #[cfg_attr(feature = "csv", derive(Serialize, Deserialize))]
 pub struct Demand {
     pub start: String,
@@ -120,25 +43,19 @@ pub struct Demand {
     pub demand_type: usize,
 }
 
-impl Demand {
-    /// Create a new demand entry
-    pub fn new(start: String, end: String, traffic: Decimal, demand_type: usize) -> Self {
-        Demand {
-            start,
-            end,
-            traffic,
-            demand_type,
-        }
-    }
-}
-
 /// Represents a Shapley value result for an operator
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "csv", derive(Serialize, Deserialize, Tabled))]
 pub struct ShapleyValue {
     pub operator: String,
     pub value: Decimal,
+    #[cfg_attr(feature = "csv", tabled(display = "display_as_percent"))]
     pub percent: Decimal,
+}
+
+#[cfg(feature = "csv")]
+fn display_as_percent(percent: &Decimal) -> String {
+    format!("{:.2}%", percent * dec!(100))
 }
 
 impl ShapleyValue {
@@ -248,23 +165,6 @@ impl DemandMatrix {
     }
 }
 
-/// Utility functions for Decimal/f64 conversion
-#[inline]
-pub fn decimal_to_f64(d: Decimal) -> f64 {
-    d.to_f64().unwrap_or(0.0)
-}
-
-#[inline]
-pub fn f64_to_decimal(f: f64) -> Decimal {
-    Decimal::from_f64(f).unwrap_or(Decimal::ZERO)
-}
-
-/// Round a Decimal to 4 decimal places (matching Python behavior)
-#[inline]
-pub fn round_decimal(d: Decimal) -> Decimal {
-    d.round_dp(4)
-}
-
 #[cfg(feature = "csv")]
 mod csv_support {
     use super::*;
@@ -346,14 +246,17 @@ mod csv_support {
                 let record: PrivateLinkRecord = result
                     .map_err(|e| crate::error::ShapleyError::ComputationError(e.to_string()))?;
 
-                let link = LinkBuilder::new(record.start, record.end)
+                let link = LinkBuilder::default()
+                    .start(record.start)
+                    .end(record.end)
                     .cost(record.cost)
                     .bandwidth(record.bandwidth)
                     .operator1(record.operator1)
                     .operator2(record.operator2)
                     .uptime(record.uptime)
                     .shared(record.shared.unwrap_or(0))
-                    .build();
+                    .build()
+                    .unwrap();
 
                 links.push(link);
             }
@@ -373,9 +276,12 @@ mod csv_support {
                 let record: PublicLinkRecord = result
                     .map_err(|e| crate::error::ShapleyError::ComputationError(e.to_string()))?;
 
-                let link = LinkBuilder::new(record.start, record.end)
+                let link = LinkBuilder::default()
+                    .start(record.start)
+                    .end(record.end)
                     .cost(record.cost)
-                    .build();
+                    .build()
+                    .unwrap();
 
                 links.push(link);
             }
@@ -395,8 +301,12 @@ mod csv_support {
                 let record: DemandRecord = result
                     .map_err(|e| crate::error::ShapleyError::ComputationError(e.to_string()))?;
 
-                let demand =
-                    Demand::new(record.start, record.end, record.traffic, record.demand_type);
+                let demand = DemandBuilder::default()
+                    .start(record.start)
+                    .end(record.end)
+                    .traffic(record.traffic)
+                    .demand_type(record.demand_type)
+                    .build()?;
 
                 demands.push(demand);
             }
@@ -409,11 +319,16 @@ mod csv_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{f64_to_decimal, round_decimal, utils::decimal_to_f64};
     use rust_decimal::dec;
 
     #[test]
     fn test_link_creation() {
-        let link = LinkBuilder::new("NYC1".to_string(), "LAX1".to_string()).build();
+        let link = LinkBuilder::default()
+            .start("NYC1".to_string())
+            .end("LAX1".to_string())
+            .build()
+            .unwrap();
         assert_eq!(link.start, "NYC1");
         assert_eq!(link.end, "LAX1");
         assert_eq!(link.cost, Decimal::ZERO);
@@ -427,7 +342,13 @@ mod tests {
 
     #[test]
     fn test_demand_creation() {
-        let demand = Demand::new("NYC".to_string(), "LAX".to_string(), dec!(100), 1);
+        let demand = DemandBuilder::default()
+            .start("NYC".to_string())
+            .end("LAX".to_string())
+            .traffic(dec!(100))
+            .demand_type(1)
+            .build()
+            .unwrap();
         assert_eq!(demand.start, "NYC");
         assert_eq!(demand.end, "LAX");
         assert_eq!(demand.traffic, dec!(100));
@@ -466,11 +387,41 @@ mod tests {
     #[test]
     fn test_demand_matrix_unique_types() {
         let demands = vec![
-            Demand::new("NYC".to_string(), "LAX".to_string(), dec!(10), 1),
-            Demand::new("NYC".to_string(), "CHI".to_string(), dec!(20), 1),
-            Demand::new("LAX".to_string(), "CHI".to_string(), dec!(30), 2),
-            Demand::new("CHI".to_string(), "NYC".to_string(), dec!(40), 3),
-            Demand::new("LAX".to_string(), "NYC".to_string(), dec!(50), 2),
+            DemandBuilder::default()
+                .start("NYC".to_string())
+                .end("LAX".to_string())
+                .traffic(dec!(10))
+                .demand_type(1)
+                .build()
+                .unwrap(),
+            DemandBuilder::default()
+                .start("NYC".to_string())
+                .end("CHI".to_string())
+                .traffic(dec!(20))
+                .demand_type(1)
+                .build()
+                .unwrap(),
+            DemandBuilder::default()
+                .start("LAX".to_string())
+                .end("CHI".to_string())
+                .traffic(dec!(30))
+                .demand_type(2)
+                .build()
+                .unwrap(),
+            DemandBuilder::default()
+                .start("CHI".to_string())
+                .end("NYC".to_string())
+                .traffic(dec!(40))
+                .demand_type(3)
+                .build()
+                .unwrap(),
+            DemandBuilder::default()
+                .start("LAX".to_string())
+                .end("NYC".to_string())
+                .traffic(dec!(50))
+                .demand_type(2)
+                .build()
+                .unwrap(),
         ];
         let matrix = DemandMatrix::from_demands(demands);
 
@@ -481,8 +432,16 @@ mod tests {
     #[test]
     fn test_private_links_operations() {
         let links = vec![
-            LinkBuilder::new("A".to_string(), "B".to_string()).build(),
-            LinkBuilder::new("B".to_string(), "C".to_string()).build(),
+            LinkBuilder::default()
+                .start("A".to_string())
+                .end("B".to_string())
+                .build()
+                .unwrap(),
+            LinkBuilder::default()
+                .start("B".to_string())
+                .end("C".to_string())
+                .build()
+                .unwrap(),
         ];
         let private_links = PrivateLinks::from_links(links);
 

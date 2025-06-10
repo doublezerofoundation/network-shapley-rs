@@ -1654,6 +1654,7 @@ dependencies = [
  "clarabel",
  "criterion",
  "csv",
+ "derive_builder",
  "faer",
  "itertools 0.14.0",
  "rayon",
