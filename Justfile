@@ -46,6 +46,10 @@ bench:
 clean:
     cargo clean
 
+# Coverage
+cov:
+    cargo llvm-cov nextest --features csv --lcov --output-path lcov.info
+
 # ---------------
 # CI
 # ---------------

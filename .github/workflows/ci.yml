@@ -24,7 +24,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.87.0
-          components: clippy, rustfmt
+          components: clippy, rustfmt, llvm-tools-preview
 
       - name: Setup | Rust cache
         uses: Swatinem/rust-cache@v2
@@ -32,8 +32,19 @@ jobs:
       - name: Setup | Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
+      - name: Setup | Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
       - name: Setup | Just
         uses: taiki-e/install-action@just
 
       - name: Test | CI Pipeline
         run: just ci
+
+      - name: Coverage | Collect coverage data
+        run: just cov
+
+      - name: Codecov | Publish coverage data
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}

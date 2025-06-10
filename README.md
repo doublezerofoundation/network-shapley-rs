@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/doublezerofoundation/network-shapley-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/doublezerofoundation/network-shapley-rs/actions/workflows/ci.yml)
 
+[![codecov](https://codecov.io/github/doublezerofoundation/network-shapley-rs/graph/badge.svg?token=S3QVQV7CFJ)](https://codecov.io/github/doublezerofoundation/network-shapley-rs)
+
 Rust implementation to match Python [network-shapley](https://github.com/doublezerofoundation/network-shapley).
 
 ## Prerequisites
