@@ -7,16 +7,16 @@ default:
 # ---------------
 
 # Run the simple example
-simple-example:
-    cargo run --example simple --release
+example-simple:
+    cargo run --example simple --release --features serde
 
-# Run the csv example
-csv-example:
-    cargo run --example csv --features csv --release
+# Run the demand1.csv example
+example-demand1:
+    cargo run --example csv_demand1 --release --features serde
 
-# Run the simulated example
-simulated-example:
-    cargo run --example simulated --features csv --release
+# Run the demand2.csv example
+example-demand2:
+    cargo run --example csv_demand2 --release --features serde
 
 # ---------------
 # Dev
@@ -38,17 +38,13 @@ clippy:
 test:
     cargo nextest run --all-features
 
-# Run benchmarks
-bench:
-    cargo bench
-
 # Clean
 clean:
     cargo clean
 
 # Coverage
 cov:
-    cargo llvm-cov nextest --features csv --lcov --output-path lcov.info
+    cargo llvm-cov nextest --features serde --no-cfg-coverage --lcov --output-path lcov.info
 
 # ---------------
 # CI

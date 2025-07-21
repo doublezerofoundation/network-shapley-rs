@@ -1,40 +1,32 @@
 [package]
-name = "shapley"
+name = "network-shapley"
 version = "0.1.0"
 edition = "2024"
 
 [[example]]
 name = "simple"
 [[example]]
-name = "csv"
+name = "csv_demand1"
 [[example]]
-name = "simulated"
+name = "csv_demand2"
 
 [dependencies]
 clarabel = "0"
-derive_builder = "0"
 faer = "0"
-itertools = "0"
 rayon = "1"
-rust_decimal = { version = "1", features = [ "macros", "serde-with-str" ] }
 thiserror = "2"
 
-# Optional dependencies for CSV support
 csv = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 tabled = { version = "0", optional = true }
 
-[features]
-csv = ["dep:csv", "dep:serde", "dep:tabled"]
-
 [dev-dependencies]
 csv = "1"
 serde = { version = "1", features = ["derive"] }
-criterion = { version = "0", features = [ "html_reports" ] }
+tabled = "0"
 
-[[bench]]
-name = "shapley_bench"
-harness = false
+[features]
+serde = ["dep:csv", "dep:serde", "dep:tabled"]
 
 [profile.release]
 lto = true
