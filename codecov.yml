@@ -1,0 +1,42 @@
+coverage:
+  status:
+    project:
+      default:
+        # We use 'auto' to prevent the overall project coverage from decreasing.
+        # It compares the PR's project coverage with the base branch's coverage.
+        # This provides a safety net against significant regressions.
+        target: auto
+
+        # A 1% threshold is allowed to account for noise in coverage calculation.
+        threshold: 1%
+
+        # If the coverage report fails to upload for any reason, we must fail
+        # the check. This prevents a broken CI step from passing silently.
+        if_no_uploads: error
+
+    # Configuration for patch status checks (new code introduced in a PR)
+    patch:
+      default:
+        # We require a minimum of 90% test coverage for any new or modified code
+        # within a pull request. This ensures a high standard of quality.
+        target: 90%
+
+        # Allow a 1% threshold to avoid blocking PRs for very minor deviations.
+        threshold: 1%
+
+        # If a PR contains no changes to covered files (e.g., docs-only change),
+        # the patch check should pass. The project check still provides a safety net.
+        if_no_uploads: success
+
+        # Focus the patch coverage calculation only on our core source code,
+        # ignoring tests, examples, etc.
+        paths:
+          - "src/"
+          - "lib/"
+
+# Ignore certain paths from the overall coverage calculation entirely.
+# This improves the accuracy of the "project" coverage metric.
+ignore:
+  - "tests/"
+  - "benches/"
+  - "examples/"
