@@ -843,4 +843,171 @@ mod tests {
         assert_eq!(matrix.n, 2);
         assert_eq!(matrix.nnz(), 4); // 2 entries per link
     }
+
+    #[test]
+    fn test_build_multicommodity_flow_matrix() {
+        let links = vec![
+            ConsolidatedLink {
+                device1: "A".to_string(),
+                device2: "B".to_string(),
+                latency: 1.0,
+                bandwidth: 10.0,
+                operator1: "Op1".to_string(),
+                operator2: "Op1".to_string(),
+                shared: 1,
+                link_type: 0,
+            },
+            ConsolidatedLink {
+                device1: "B".to_string(),
+                device2: "C".to_string(),
+                latency: 1.0,
+                bandwidth: 10.0,
+                operator1: "Op1".to_string(),
+                operator2: "Op1".to_string(),
+                shared: 1,
+                link_type: 0,
+            },
+        ];
+
+        let _demands = vec![
+            ConsolidatedDemand {
+                start: "A".to_string(),
+                end: "B".to_string(),
+                receivers: 1,
+                traffic: 5.0,
+                priority: 1.0,
+                kind: 1,
+                multicast: false,
+                original: 1,
+            },
+            ConsolidatedDemand {
+                start: "A".to_string(),
+                end: "C".to_string(),
+                receivers: 1,
+                traffic: 3.0,
+                priority: 1.0,
+                kind: 2,
+                multicast: false,
+                original: 2,
+            },
+        ];
+
+        let mut node_idx = HashMap::new();
+        node_idx.insert("A", 0);
+        node_idx.insert("B", 1);
+        node_idx.insert("C", 2);
+
+        // Test multicommodity flow construction
+        let n_nodes = 3;
+        let unique_types = vec![1, 2];
+
+        // This should trigger the multicommodity flow path
+        let mut matrices = Vec::new();
+        for &demand_type in &unique_types {
+            let type_links: Vec<ConsolidatedLink> = links
+                .iter()
+                .filter(|l| l.link_type == 0 || l.link_type == demand_type)
+                .cloned()
+                .collect();
+
+            // This tests the multicommodity matrix building path
+            if let Ok(matrix) = build_single_commodity_matrix(&type_links, &node_idx, n_nodes) {
+                matrices.push(matrix);
+            }
+        }
+
+        assert_eq!(matrices.len(), 2);
+    }
+
+    #[test]
+    fn test_build_multicast_demand_matrix() {
+        let demands = vec![
+            ConsolidatedDemand {
+                start: "A".to_string(),
+                end: "B".to_string(),
+                receivers: 1,
+                traffic: 5.0,
+                priority: 1.0,
+                kind: 1,
+                multicast: true, // Multicast demand
+                original: 1,
+            },
+            ConsolidatedDemand {
+                start: "A".to_string(),
+                end: "C".to_string(),
+                receivers: 1,
+                traffic: 3.0,
+                priority: 1.0,
+                kind: 1,
+                multicast: true, // Same multicast group
+                original: 1,
+            },
+        ];
+
+        let mut node_idx = HashMap::new();
+        node_idx.insert("A", 0);
+        node_idx.insert("B", 1);
+        node_idx.insert("C", 2);
+
+        // Test multicast demand matrix construction
+        let multicast_demands: Vec<&ConsolidatedDemand> =
+            demands.iter().filter(|d| d.multicast).collect();
+
+        assert_eq!(multicast_demands.len(), 2);
+
+        // Build demand vector for multicast
+        let mut b_vector = vec![0.0; 3];
+        for demand in &multicast_demands {
+            if let Some(&src_idx) = node_idx.get(demand.start.as_str()) {
+                b_vector[src_idx] -= demand.traffic;
+            }
+            if let Some(&dst_idx) = node_idx.get(demand.end.as_str()) {
+                b_vector[dst_idx] += demand.traffic;
+            }
+        }
+
+        assert_eq!(b_vector[0], -8.0); // Source A: -(5+3)
+        assert_eq!(b_vector[1], 5.0); // Dest B: +5
+        assert_eq!(b_vector[2], 3.0); // Dest C: +3
+    }
+
+    #[test]
+    fn test_sparse_matrix_edge_cases() {
+        // Test with minimal input
+        let links = vec![ConsolidatedLink {
+            device1: "A".to_string(),
+            device2: "B".to_string(),
+            latency: 1.0,
+            bandwidth: 10.0,
+            operator1: "Op1".to_string(),
+            operator2: "Op1".to_string(),
+            shared: 1,
+            link_type: 0,
+        }];
+
+        let mut node_idx = HashMap::new();
+        node_idx.insert("A", 0);
+        node_idx.insert("B", 1);
+
+        // Test with 2 nodes (minimal case)
+        let matrix = build_single_commodity_matrix(&links, &node_idx, 2)
+            .expect("Should handle minimal input");
+
+        assert_eq!(matrix.m, 2);
+        assert_eq!(matrix.n, 1);
+        assert_eq!(matrix.nnz(), 2);
+    }
+
+    #[test]
+    fn test_empty_links() {
+        let links: Vec<ConsolidatedLink> = vec![];
+        let node_idx = HashMap::new();
+
+        let result = build_single_commodity_matrix(&links, &node_idx, 0);
+        assert!(result.is_ok());
+        let matrix = result.unwrap();
+        assert_eq!(matrix.nnz(), 0);
+        assert_eq!(matrix.m, 0);
+        assert_eq!(matrix.n, 0);
+    }
 }

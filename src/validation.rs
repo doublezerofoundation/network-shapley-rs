@@ -13,18 +13,21 @@ pub(crate) fn check_inputs(
     public_links: &PublicLinks,
     operator_uptime: f64,
 ) -> Result<()> {
-    // Check operator count
+    // Check for "Public" operator name before filtering
+    for device in devices {
+        if device.operator == "Public" {
+            return Err(ShapleyError::Validation(
+                "Public is a protected keyword for operator names; choose another.".to_string(),
+            ));
+        }
+    }
+
+    // Check operator count (excluding "Private" and "Public")
     let operators: HashSet<&str> = devices
         .iter()
         .map(|d| d.operator.as_str())
         .filter(|&op| op != "Private" && op != "Public")
         .collect();
-
-    if operators.contains(&"Public") {
-        return Err(ShapleyError::Validation(
-            "Public is a protected keyword for operator names; choose another.".to_string(),
-        ));
-    }
 
     let n_ops = operators.len();
     if operator_uptime < 1.0 {

@@ -473,4 +473,67 @@ mod tests {
         assert_eq!(result[0].traffic, 2.0); // Multiplied by 2
         assert_eq!(result[1].traffic, 2.0);
     }
+
+    #[test]
+    fn test_consolidate_demand_with_multicast() {
+        let demands = vec![
+            // Multicast demands of the same type
+            Demand::new("A".to_string(), "B".to_string(), 1, 1.0, 1.0, 1, true),
+            Demand::new("A".to_string(), "C".to_string(), 1, 1.0, 1.0, 1, true),
+            Demand::new("A".to_string(), "D".to_string(), 1, 1.0, 1.0, 1, true),
+            // Another multicast group
+            Demand::new("X".to_string(), "Y".to_string(), 1, 2.0, 1.0, 2, true),
+            Demand::new("X".to_string(), "Z".to_string(), 1, 2.0, 1.0, 2, true),
+        ];
+
+        let result = consolidate_demand(&demands, 1.0)
+            .expect("Multicast demand consolidation should succeed");
+
+        // Check that multicast demands are properly consolidated
+        // The first 3 should have the same type, last 2 should have different types
+        let multicast_results: Vec<_> = result.iter().filter(|d| d.multicast).collect();
+        assert_eq!(multicast_results.len(), 5);
+
+        // Check that multicast demands with same original type get unique types
+        let types: Vec<_> = multicast_results.iter().map(|d| d.kind).collect();
+        let unique_types: std::collections::HashSet<_> = types.iter().cloned().collect();
+
+        // Should have assigned unique types to multicast demands
+        assert!(unique_types.len() >= 2);
+    }
+
+    #[test]
+    fn test_consolidate_demand_empty() {
+        let demands = vec![];
+        let result = consolidate_demand(&demands, 1.0).expect("Empty demands should succeed");
+
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_mixed_multicast_and_regular() {
+        let demands = vec![
+            // Regular demands
+            Demand::new("A".to_string(), "B".to_string(), 1, 1.0, 1.0, 1, false),
+            Demand::new("C".to_string(), "D".to_string(), 2, 2.0, 1.0, 2, false),
+            // Multicast demand
+            Demand::new("E".to_string(), "F".to_string(), 3, 3.0, 1.0, 3, true),
+            Demand::new("E".to_string(), "G".to_string(), 3, 3.0, 1.0, 3, true),
+        ];
+
+        let result = consolidate_demand(&demands, 1.0).expect("Mixed demands should succeed");
+
+        assert_eq!(result.len(), 4);
+
+        // Check that multicast demands have unique types assigned
+        let multicast_types: Vec<_> = result
+            .iter()
+            .filter(|d| d.multicast)
+            .map(|d| d.kind)
+            .collect();
+
+        let unique_multicast_types: std::collections::HashSet<_> =
+            multicast_types.iter().cloned().collect();
+        assert_eq!(unique_multicast_types.len(), multicast_types.len());
+    }
 }

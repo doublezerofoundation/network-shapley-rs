@@ -44,7 +44,7 @@ clean:
 
 # Coverage
 cov:
-    cargo llvm-cov nextest --features serde --lcov --output-path lcov.info
+    cargo llvm-cov nextest --features serde --no-cfg-coverage --lcov --output-path lcov.info
 
 # ---------------
 # CI

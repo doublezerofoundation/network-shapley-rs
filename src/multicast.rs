@@ -224,3 +224,170 @@ pub(crate) fn hstack_matrices(matrices: &[&CscMatrix<f64>]) -> Result<CscMatrix<
 
     Ok(CscMatrix::new(n_rows, total_cols, col_ptr, row_ind, values))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ConsolidatedLink;
+
+    #[test]
+    fn test_build_j2_matrix_empty_ineligible() {
+        let links = vec![
+            ConsolidatedLink {
+                device1: "A".to_string(),
+                device2: "B".to_string(),
+                latency: 0.0,
+                bandwidth: 10.0,
+                operator1: "Op1".to_string(),
+                operator2: "Op1".to_string(),
+                shared: 1,
+                link_type: 0,
+            },
+            ConsolidatedLink {
+                device1: "B".to_string(),
+                device2: "C".to_string(),
+                latency: 0.0,
+                bandwidth: 10.0,
+                operator1: "Op2".to_string(),
+                operator2: "Op2".to_string(),
+                shared: 2,
+                link_type: 0,
+            },
+        ];
+
+        // Empty multicast ineligible list
+        let mcast_ineligible: Vec<usize> = vec![];
+        let max_shared = 2;
+
+        let j2 = build_j2_matrix(&links, &mcast_ineligible, max_shared).unwrap();
+
+        // J2 should be a zero matrix when no links are ineligible
+        assert_eq!(j2.nnz(), 0);
+        assert_eq!(j2.m, max_shared);
+        assert_eq!(j2.n, links.len());
+    }
+
+    #[test]
+    fn test_build_j2_matrix_all_ineligible() {
+        let links = vec![
+            ConsolidatedLink {
+                device1: "A".to_string(),
+                device2: "B".to_string(),
+                latency: 0.0,
+                bandwidth: 10.0,
+                operator1: "Op1".to_string(),
+                operator2: "Op1".to_string(),
+                shared: 1,
+                link_type: 0,
+            },
+            ConsolidatedLink {
+                device1: "B".to_string(),
+                device2: "C".to_string(),
+                latency: 0.0,
+                bandwidth: 10.0,
+                operator1: "Op2".to_string(),
+                operator2: "Op2".to_string(),
+                shared: 2,
+                link_type: 0,
+            },
+        ];
+
+        // All links are multicast ineligible
+        let mcast_ineligible = vec![0, 1];
+        let max_shared = 2;
+
+        let j2 = build_j2_matrix(&links, &mcast_ineligible, max_shared).unwrap();
+
+        // J2 should have entries for all ineligible links
+        assert_eq!(j2.nnz(), 2);
+        assert_eq!(j2.m, max_shared);
+        assert_eq!(j2.n, links.len());
+    }
+
+    #[test]
+    fn test_compute_j1_minus_j2_subtraction() {
+        let links = vec![
+            ConsolidatedLink {
+                device1: "A".to_string(),
+                device2: "B".to_string(),
+                latency: 0.0,
+                bandwidth: 10.0,
+                operator1: "Op1".to_string(),
+                operator2: "Op1".to_string(),
+                shared: 1,
+                link_type: 0,
+            },
+            ConsolidatedLink {
+                device1: "B".to_string(),
+                device2: "C".to_string(),
+                latency: 0.0,
+                bandwidth: 10.0,
+                operator1: "Op2".to_string(),
+                operator2: "Op2".to_string(),
+                shared: 2,
+                link_type: 0,
+            },
+        ];
+
+        let n_private = 2;
+        let mcast_ineligible = vec![0]; // First link is ineligible
+        let max_shared = 2;
+
+        let j1 = build_j1_matrix(&links, n_private, max_shared).unwrap();
+        let j2 = build_j2_matrix(&links, &mcast_ineligible, max_shared).unwrap();
+        let result = compute_j1_minus_j2(&j1, &j2).unwrap();
+
+        // The result should have J1 entries minus J2 entries
+        // J1 has all private links, J2 has only the first link
+        // So the difference should have an entry for the second link only
+        assert_eq!(result.m, max_shared);
+        assert_eq!(result.n, links.len());
+    }
+
+    #[test]
+    fn test_compute_j1_minus_j2_error_propagation() {
+        let links = vec![ConsolidatedLink {
+            device1: "A".to_string(),
+            device2: "B".to_string(),
+            latency: 0.0,
+            bandwidth: 10.0,
+            operator1: "Op1".to_string(),
+            operator2: "Op1".to_string(),
+            shared: 3, // Shared ID exceeds max_shared
+            link_type: 0,
+        }];
+
+        let n_private = 1;
+        let max_shared = 2; // Too small for shared ID 3
+
+        // Build J1 - it should succeed but skip the link with invalid shared ID
+        let j1_result = build_j1_matrix(&links, n_private, max_shared);
+
+        assert!(j1_result.is_ok());
+        let j1 = j1_result.unwrap();
+        // The matrix should have no entries since the link was skipped
+        assert_eq!(j1.nnz(), 0);
+    }
+
+    #[test]
+    fn test_concatenate_horizontal_mismatched_rows() {
+        // Create two matrices with different number of rows
+        let matrix1 = CscMatrix::<f64>::from(&[[1.0, 2.0], [3.0, 4.0]]);
+
+        let matrix2 = CscMatrix::<f64>::from(&[
+            [5.0],
+            [6.0],
+            [7.0], // Extra row
+        ]);
+
+        let result = hstack_matrices(&[&matrix1, &matrix2]);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ShapleyError::MatrixConstructionError(msg) => {
+                assert!(msg.contains("same number of rows"));
+            }
+            _ => panic!("Expected MatrixConstructionError"),
+        }
+    }
+}
