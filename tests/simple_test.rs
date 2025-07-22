@@ -108,30 +108,12 @@ fn test_simple_example_matches_python() {
     // Compute Shapley values
     let result = input.compute().expect("Failed to compute Shapley values");
 
-    // Debug output
-    for value in &result.values {
-        println!(
-            "  {}: {} ({}%)",
-            value.operator,
-            value.value,
-            value.proportion * 100.0
-        );
-    }
-
     // Check results
-    assert_eq!(result.values.len(), 2, "Should have 2 operators");
+    assert_eq!(result.len(), 2, "Should have 2 operators");
 
     // Find Alpha and Beta values
-    let alpha = result
-        .values
-        .iter()
-        .find(|v| v.operator == "Alpha")
-        .expect("Alpha not found");
-    let beta = result
-        .values
-        .iter()
-        .find(|v| v.operator == "Beta")
-        .expect("Beta not found");
+    let alpha = result.get("Alpha").unwrap();
+    let beta = result.get("Beta").unwrap();
 
     // Expected values from Python
     let expected_alpha = 173.6756;

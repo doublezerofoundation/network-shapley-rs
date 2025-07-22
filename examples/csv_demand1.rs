@@ -4,7 +4,7 @@ use network_shapley::{
     types::{Demand, Demands, Device, Devices, PrivateLink, PrivateLinks, PublicLink, PublicLinks},
 };
 use std::fs::File;
-use tabled::{Table, settings::Style};
+use tabled::{builder::Builder as TableBuilder, settings::Style};
 
 fn read_pvt_links(file_path: &str) -> Result<PrivateLinks> {
     let file = File::open(file_path).unwrap();
@@ -68,7 +68,8 @@ fn main() -> Result<()> {
 
     let result = input.compute()?;
 
-    let table = Table::new(result.values)
+    let table = TableBuilder::from(result)
+        .build()
         .with(Style::psql().remove_horizontals())
         .to_string();
     println!("{table}");
