@@ -869,29 +869,6 @@ mod tests {
             },
         ];
 
-        let _demands = vec![
-            ConsolidatedDemand {
-                start: "A".to_string(),
-                end: "B".to_string(),
-                receivers: 1,
-                traffic: 5.0,
-                priority: 1.0,
-                kind: 1,
-                multicast: false,
-                original: 1,
-            },
-            ConsolidatedDemand {
-                start: "A".to_string(),
-                end: "C".to_string(),
-                receivers: 1,
-                traffic: 3.0,
-                priority: 1.0,
-                kind: 2,
-                multicast: false,
-                original: 2,
-            },
-        ];
-
         let mut node_idx = HashMap::new();
         node_idx.insert("A", 0);
         node_idx.insert("B", 1);
@@ -921,7 +898,7 @@ mod tests {
 
     #[test]
     fn test_build_multicast_demand_matrix() {
-        let demands = vec![
+        let demands = [
             ConsolidatedDemand {
                 start: "A".to_string(),
                 end: "B".to_string(),
@@ -956,7 +933,7 @@ mod tests {
         assert_eq!(multicast_demands.len(), 2);
 
         // Build demand vector for multicast
-        let mut b_vector = vec![0.0; 3];
+        let mut b_vector = [0.0; 3];
         for demand in &multicast_demands {
             if let Some(&src_idx) = node_idx.get(demand.start.as_str()) {
                 b_vector[src_idx] -= demand.traffic;

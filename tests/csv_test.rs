@@ -64,7 +64,7 @@ fn assert_shapley_value(
     expected_proportion: f64,
 ) {
     let sv = find_operator_value(values, operator)
-        .unwrap_or_else(|| panic!("Operator {} not found in results", operator));
+        .unwrap_or_else(|| panic!("Operator {operator} not found in results"));
 
     let value_f64 = sv.value;
     let proportion_f64 = sv.proportion;
@@ -72,17 +72,11 @@ fn assert_shapley_value(
     // Assert with tolerance of 0.01 for values and 0.0001 for proportions
     assert!(
         (value_f64 - expected_value).abs() < 0.01,
-        "Value mismatch for {}: expected {}, got {}",
-        operator,
-        expected_value,
-        value_f64
+        "Value mismatch for {operator}: expected {expected_value}, got {value_f64}",
     );
     assert!(
         (proportion_f64 - expected_proportion).abs() < 0.0001,
-        "Proportion mismatch for {}: expected {}, got {}",
-        operator,
-        expected_proportion,
-        proportion_f64
+        "Proportion mismatch for {operator}: expected {expected_proportion}, got {proportion_f64}",
     );
 }
 

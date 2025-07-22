@@ -64,13 +64,13 @@ pub(crate) fn check_inputs(
                 link.device2
             )));
         }
-        if link.device1.contains("00") {
+        if link.device1.ends_with("00") {
             return Err(ShapleyError::InvalidDeviceLabel(format!(
                 "Device {} should not have a 00 code",
                 link.device1
             )));
         }
-        if link.device2.contains("00") {
+        if link.device2.ends_with("00") {
             return Err(ShapleyError::InvalidDeviceLabel(format!(
                 "Device {} should not have a 00 code",
                 link.device2
