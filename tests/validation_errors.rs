@@ -73,7 +73,7 @@ fn test_too_many_operators_with_low_uptime() {
     let mut devices = vec![];
     // Create 16 operators (limit is 15 when uptime < 1.0)
     for i in 1..=16 {
-        devices.push(Device::new(format!("NYC{}", i), 10, format!("Op{}", i)));
+        devices.push(Device::new(format!("NYC{i}"), 10, format!("Op{i}")));
     }
 
     let private_links = vec![PrivateLink::new(
@@ -113,7 +113,7 @@ fn test_too_many_operators_with_full_uptime() {
     let mut devices = vec![];
     // Create 21 operators (limit is 20 when uptime = 1.0)
     for i in 1..=21 {
-        devices.push(Device::new(format!("NYC{}", i), 10, format!("Op{}", i)));
+        devices.push(Device::new(format!("NYC{i}"), 10, format!("Op{i}")));
     }
 
     let private_links = vec![PrivateLink::new(

@@ -1,10 +1,10 @@
 use network_shapley::{
     error::Result,
-    shapley::{ShapleyInput, ShapleyValue},
+    shapley::{ShapleyInput, ShapleyOutput},
     types::{Demand, Demands, Device, Devices, PrivateLink, PrivateLinks, PublicLink, PublicLinks},
 };
 use std::fs::File;
-use tabled::{Table, settings::Style};
+use tabled::{builder::Builder as TableBuilder, settings::Style};
 
 fn read_pvt_links(file_path: &str) -> Result<PrivateLinks> {
     let file = File::open(file_path).unwrap();
@@ -50,39 +50,24 @@ fn read_demands(file_path: &str) -> Result<Demands> {
     Ok(demands)
 }
 
-fn find_operator_value<'a>(
-    values: &'a [ShapleyValue],
-    operator: &'a str,
-) -> Option<&'a ShapleyValue> {
-    values.iter().find(|v| v.operator == operator)
-}
-
 fn assert_shapley_value(
-    values: &[ShapleyValue],
+    shapley_output: &ShapleyOutput,
     operator: &str,
     expected_value: f64,
     expected_proportion: f64,
 ) {
-    let sv = find_operator_value(values, operator)
-        .unwrap_or_else(|| panic!("Operator {} not found in results", operator));
-
+    let sv = shapley_output.get(operator).unwrap();
     let value_f64 = sv.value;
     let proportion_f64 = sv.proportion;
 
     // Assert with tolerance of 0.01 for values and 0.0001 for proportions
     assert!(
         (value_f64 - expected_value).abs() < 0.01,
-        "Value mismatch for {}: expected {}, got {}",
-        operator,
-        expected_value,
-        value_f64
+        "Value mismatch for {operator}: expected {expected_value}, got {value_f64}",
     );
     assert!(
         (proportion_f64 - expected_proportion).abs() < 0.0001,
-        "Proportion mismatch for {}: expected {}, got {}",
-        operator,
-        expected_proportion,
-        proportion_f64
+        "Proportion mismatch for {operator}: expected {expected_proportion}, got {proportion_f64}",
     );
 }
 
@@ -104,20 +89,21 @@ fn test_csv_demand1() {
     };
 
     let result = input.compute().unwrap();
-    let table = Table::new(&result.values)
+    let table = TableBuilder::from(result.clone())
+        .build()
         .with(Style::psql().remove_horizontals())
         .to_string();
     println!("{table}");
 
     // Expected values from Python output
-    assert_shapley_value(&result.values, "Alpha", 21.5370, 0.0208);
-    assert_shapley_value(&result.values, "Beta", 10.6595, 0.0103);
-    assert_shapley_value(&result.values, "Delta", 13.5257, 0.0131);
-    assert_shapley_value(&result.values, "Epsilon", 0.0407, 0.0000);
-    assert_shapley_value(&result.values, "Gamma", 487.1094, 0.4701);
-    assert_shapley_value(&result.values, "Kappa", 0.0603, 0.0001);
-    assert_shapley_value(&result.values, "Theta", 503.1153, 0.4855);
-    assert_shapley_value(&result.values, "Zeta", 0.1393, 0.0001);
+    assert_shapley_value(&result, "Alpha", 21.5370, 0.0208);
+    assert_shapley_value(&result, "Beta", 10.6595, 0.0103);
+    assert_shapley_value(&result, "Delta", 13.5257, 0.0131);
+    assert_shapley_value(&result, "Epsilon", 0.0407, 0.0000);
+    assert_shapley_value(&result, "Gamma", 487.1094, 0.4701);
+    assert_shapley_value(&result, "Kappa", 0.0603, 0.0001);
+    assert_shapley_value(&result, "Theta", 503.1153, 0.4855);
+    assert_shapley_value(&result, "Zeta", 0.1393, 0.0001);
 }
 
 #[test]
@@ -138,18 +124,19 @@ fn test_csv_demand2() {
     };
 
     let result = input.compute().unwrap();
-    let table = Table::new(&result.values)
+    let table = TableBuilder::from(result.clone())
+        .build()
         .with(Style::psql().remove_horizontals())
         .to_string();
     println!("{table}");
 
     // Expected values from Python output
-    assert_shapley_value(&result.values, "Alpha", 2.0154, 0.0016);
-    assert_shapley_value(&result.values, "Beta", 187.1198, 0.1501);
-    assert_shapley_value(&result.values, "Delta", 111.6727, 0.0895);
-    assert_shapley_value(&result.values, "Epsilon", 88.5022, 0.0709);
-    assert_shapley_value(&result.values, "Gamma", 23.0343, 0.0184);
-    assert_shapley_value(&result.values, "Kappa", 10.6421, 0.0085);
-    assert_shapley_value(&result.values, "Theta", 333.5522, 0.2675);
-    assert_shapley_value(&result.values, "Zeta", 490.0349, 0.3931);
+    assert_shapley_value(&result, "Alpha", 2.0154, 0.0016);
+    assert_shapley_value(&result, "Beta", 187.1198, 0.1501);
+    assert_shapley_value(&result, "Delta", 111.6727, 0.0895);
+    assert_shapley_value(&result, "Epsilon", 88.5022, 0.0709);
+    assert_shapley_value(&result, "Gamma", 23.0343, 0.0184);
+    assert_shapley_value(&result, "Kappa", 10.6421, 0.0085);
+    assert_shapley_value(&result, "Theta", 333.5522, 0.2675);
+    assert_shapley_value(&result, "Zeta", 490.0349, 0.3931);
 }

@@ -1,12 +1,3 @@
-use faer::prelude::*;
-use rayon::prelude::*;
-
-#[cfg(feature = "serde")]
-use {
-    serde::{Deserialize, Serialize},
-    tabled::Tabled,
-};
-
 use crate::{
     consolidation::{consolidate_demand, consolidate_links},
     error::{Result, ShapleyError},
@@ -17,6 +8,24 @@ use crate::{
     validation::check_inputs,
 };
 use clarabel::solver::SolverStatus;
+use faer::prelude::*;
+use rayon::prelude::*;
+use std::{
+    collections::BTreeMap,
+    fmt::{Display, Formatter},
+};
+
+#[cfg(feature = "serde")]
+use {
+    serde::{Deserialize, Serialize},
+    tabled::Tabled,
+};
+
+// For clarity
+pub type Operator = String;
+
+// Since shapley value is per operator, we just use a hashmap
+pub type ShapleyOutput = BTreeMap<Operator, ShapleyValue>;
 
 /// Input parameters for Shapley computation
 #[derive(Debug)]
@@ -42,33 +51,23 @@ impl ShapleyInput {
             self.demand_multiplier,
         );
 
-        let computed_values = shapley.compute()?;
-        let values = computed_values
-            .into_iter()
-            .map(|c| ShapleyValue {
-                operator: c.operator,
-                value: c.value,
-                proportion: c.proportion,
-            })
-            .collect();
-
-        Ok(ShapleyOutput { values })
+        let output = shapley.compute()?;
+        Ok(output)
     }
-}
-
-/// Output from Shapley computation
-#[derive(Debug)]
-pub struct ShapleyOutput {
-    pub values: Vec<ShapleyValue>,
 }
 
 /// Individual Shapley value for an operator
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize, Tabled))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShapleyValue {
-    pub operator: String,
     pub value: f64,
     pub proportion: f64,
+}
+
+impl Display for ShapleyValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "value: {}, proportion: {}", self.value, self.proportion)
+    }
 }
 
 #[derive(Debug)]
@@ -103,7 +102,7 @@ impl Shapley {
         }
     }
 
-    fn compute(&self) -> Result<Vec<ShapleyComputed>> {
+    fn compute(&self) -> Result<ShapleyOutput> {
         // Validate inputs
         check_inputs(
             &self.private_links,
@@ -126,7 +125,7 @@ impl Shapley {
 
         let n_operators = operators.len();
         if n_operators == 0 {
-            return Ok(vec![]);
+            return Ok(ShapleyOutput::new());
         }
 
         // Add hard limit to prevent computationally infeasible problems
@@ -215,7 +214,7 @@ impl Shapley {
         // Convert to output format
         let total_value: f64 = shapley_values.iter().map(|v| v.max(0.0)).sum();
 
-        Ok(operators
+        let output = operators
             .into_iter()
             .zip(shapley_values)
             .map(|(operator, value)| {
@@ -225,21 +224,12 @@ impl Shapley {
                     0.0
                 };
 
-                ShapleyComputed {
-                    operator,
-                    value,
-                    proportion,
-                }
+                (operator, ShapleyValue { value, proportion })
             })
-            .collect())
-    }
-}
+            .collect();
 
-#[derive(Debug, Clone)]
-struct ShapleyComputed {
-    pub operator: String,
-    pub value: f64,
-    pub proportion: f64,
+        Ok(output)
+    }
 }
 
 /// Compute expected values considering operator uptime
