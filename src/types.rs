@@ -9,11 +9,8 @@ pub type PublicLinks = Vec<PublicLink>;
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct Device {
-    #[cfg_attr(feature = "serde", serde(rename = "Device"))]
     pub device: String,
-    #[cfg_attr(feature = "serde", serde(rename = "Edge"))]
     pub edge: u32,
-    #[cfg_attr(feature = "serde", serde(rename = "Operator"))]
     pub operator: String,
 }
 
@@ -30,20 +27,12 @@ impl Device {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct PrivateLink {
-    #[cfg_attr(feature = "serde", serde(rename = "Device1"))]
     pub device1: String,
-    #[cfg_attr(feature = "serde", serde(rename = "Device2"))]
     pub device2: String,
-    #[cfg_attr(feature = "serde", serde(rename = "Latency"))]
     pub latency: f64,
-    #[cfg_attr(feature = "serde", serde(rename = "Bandwidth"))]
     pub bandwidth: f64,
-    #[cfg_attr(feature = "serde", serde(rename = "Uptime"))]
     pub uptime: f64,
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "Shared", deserialize_with = "deser_shared")
-    )]
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "deser_shared"))]
     pub shared: Option<u32>,
 }
 
@@ -100,11 +89,8 @@ impl PrivateLink {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct PublicLink {
-    #[cfg_attr(feature = "serde", serde(rename = "City1"))]
     pub city1: String,
-    #[cfg_attr(feature = "serde", serde(rename = "City2"))]
     pub city2: String,
-    #[cfg_attr(feature = "serde", serde(rename = "Latency"))]
     pub latency: f64,
 }
 
@@ -121,22 +107,14 @@ impl PublicLink {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone)]
 pub struct Demand {
-    #[cfg_attr(feature = "serde", serde(rename = "Start"))]
     pub start: String,
-    #[cfg_attr(feature = "serde", serde(rename = "End"))]
     pub end: String,
-    #[cfg_attr(feature = "serde", serde(rename = "Receivers"))]
     pub receivers: u32,
-    #[cfg_attr(feature = "serde", serde(rename = "Traffic"))]
     pub traffic: f64,
-    #[cfg_attr(feature = "serde", serde(rename = "Priority"))]
     pub priority: f64,
-    #[cfg_attr(feature = "serde", serde(rename = "Type"))]
+    #[cfg_attr(feature = "serde", serde(rename = "type"))]
     pub kind: u32, // aka type
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "Multicast", deserialize_with = "deser_multicast")
-    )]
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "deser_multicast"))]
     pub multicast: bool,
 }
 

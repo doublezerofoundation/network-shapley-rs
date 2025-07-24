@@ -1,4 +1,4 @@
-Device1,Device2,Latency,Bandwidth,Uptime,Shared
+device1,device2,latency,bandwidth,uptime,shared
 SEO1,TYO2,4.50,10,0.99,NA
 TYO1,LAX1,57.62,10,0.99,NA
 TYO1,SIN1,44.95,10,0.99,NA
