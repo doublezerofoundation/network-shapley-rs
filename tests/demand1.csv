@@ -1,4 +1,4 @@
-Start,End,Receivers,Traffic,Priority,Type,Multicast
+start,end,receivers,traffic,priority,type,multicast
 SIN,AMS,40,0.1,0.62,1,FALSE
 SIN,BAR,1,0.1,0.15,1,FALSE
 SIN,FRA,50,0.1,0.34,1,FALSE
