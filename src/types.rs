@@ -1,12 +1,16 @@
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize};
 
+#[cfg(feature = "borsh")]
+use borsh::{BorshDeserialize, BorshSerialize};
+
 pub type Demands = Vec<Demand>;
 pub type Devices = Vec<Device>;
 pub type PrivateLinks = Vec<PrivateLink>;
 pub type PublicLinks = Vec<PublicLink>;
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
 #[derive(Debug, Clone)]
 pub struct Device {
     pub device: String,
@@ -25,6 +29,7 @@ impl Device {
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
 #[derive(Debug, Clone)]
 pub struct PrivateLink {
     pub device1: String,
@@ -43,7 +48,7 @@ where
     T: std::str::FromStr,
     T::Err: std::fmt::Display,
 {
-    let s = String::deserialize(deserializer)?;
+    let s = <String as serde::Deserialize>::deserialize(deserializer)?;
     if s == "NA" || s.is_empty() {
         Ok(None)
     } else {
@@ -56,7 +61,7 @@ fn deser_multicast<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let s = String::deserialize(deserializer)?;
+    let s = <String as serde::Deserialize>::deserialize(deserializer)?;
     match s.to_lowercase().as_str() {
         "true" => Ok(true),
         "false" => Ok(false),
@@ -87,6 +92,7 @@ impl PrivateLink {
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
 #[derive(Debug, Clone)]
 pub struct PublicLink {
     pub city1: String,
@@ -105,6 +111,7 @@ impl PublicLink {
 }
 
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
 #[derive(Debug, Clone)]
 pub struct Demand {
     pub start: String,
