@@ -51,33 +51,6 @@ pub(crate) fn check_inputs(
         ));
     }
 
-    for link in private_links {
-        if !has_digit(&link.device1) {
-            return Err(ShapleyError::InvalidDeviceLabel(format!(
-                "Device {} should contain a digit",
-                link.device1
-            )));
-        }
-        if !has_digit(&link.device2) {
-            return Err(ShapleyError::InvalidDeviceLabel(format!(
-                "Device {} should contain a digit",
-                link.device2
-            )));
-        }
-        if link.device1.ends_with("00") {
-            return Err(ShapleyError::InvalidDeviceLabel(format!(
-                "Device {} should not have a 00 code",
-                link.device1
-            )));
-        }
-        if link.device2.ends_with("00") {
-            return Err(ShapleyError::InvalidDeviceLabel(format!(
-                "Device {} should not have a 00 code",
-                link.device2
-            )));
-        }
-    }
-
     // Check that public links table is labeled correctly
     for link in public_links {
         if has_digit(&link.city1) {

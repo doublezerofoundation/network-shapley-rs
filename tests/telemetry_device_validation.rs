@@ -214,8 +214,8 @@ fn test_mixed_format_device_names() {
 }
 
 #[test]
-fn test_device_names_still_require_digits() {
-    // Verify that device names without digits are still rejected
+fn test_device_names_without_digits_are_allowed() {
+    // Device names may omit digits; ensure they pass validation
     let devices = vec![
         Device::new("nyc-dz-abc".to_string(), 10, "Alpha".to_string()), // no digits
         Device::new("LON1".to_string(), 10, "Beta".to_string()),
@@ -253,8 +253,5 @@ fn test_device_names_still_require_digits() {
     };
 
     let result = input.compute();
-    assert!(
-        result.is_err(),
-        "Device names without digits should still be rejected"
-    );
+    assert!(result.is_ok());
 }

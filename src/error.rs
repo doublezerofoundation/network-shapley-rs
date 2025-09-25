@@ -16,9 +16,6 @@ pub enum ShapleyError {
     #[error("Too many operators: {count} (limit is {limit})")]
     TooManyOperators { count: usize, limit: usize },
 
-    #[error("Invalid device label: {0}")]
-    InvalidDeviceLabel(String),
-
     #[error("Invalid city label: {0}")]
     InvalidCityLabel(String),
 

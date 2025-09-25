@@ -176,7 +176,7 @@ fn test_empty_private_links_rejected() {
 }
 
 #[test]
-fn test_device_without_digit_rejected() {
+fn test_device_without_digit_allowed() {
     let devices = vec![
         Device::new("NYCX".to_string(), 10, "Alpha".to_string()), // No digit
         Device::new("LON1".to_string(), 10, "Beta".to_string()),
@@ -203,18 +203,14 @@ fn test_device_without_digit_rejected() {
     };
 
     let result = input.compute();
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        ShapleyError::InvalidDeviceLabel(msg) => {
-            assert!(msg.contains("NYCX"));
-            assert!(msg.contains("should contain a digit"));
-        }
-        _ => panic!("Expected InvalidDeviceLabel error"),
-    }
+    assert!(
+        result.is_ok(),
+        "Device labels without digits should no longer trigger validation errors",
+    );
 }
 
 #[test]
-fn test_device_with_00_code_rejected() {
+fn test_device_with_00_code_allowed() {
     let devices = vec![
         Device::new("NYC00".to_string(), 10, "Alpha".to_string()), // Has 00 code
         Device::new("LON1".to_string(), 10, "Beta".to_string()),
@@ -241,14 +237,10 @@ fn test_device_with_00_code_rejected() {
     };
 
     let result = input.compute();
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        ShapleyError::InvalidDeviceLabel(msg) => {
-            assert!(msg.contains("NYC00"));
-            assert!(msg.contains("should not have a 00 code"));
-        }
-        _ => panic!("Expected InvalidDeviceLabel error"),
-    }
+    assert!(
+        result.is_ok(),
+        "Device labels ending in '00' should no longer trigger validation errors",
+    );
 }
 
 // Note: 2-letter cities are allowed - removing this test

@@ -307,10 +307,10 @@ fn compute_expected_values(
     }
 
     // The Python implementation has a special case for the empty coalition's value
-    if let Some(v) = svalue[0] {
-        if v.is_finite() {
-            evalue[0] = v;
-        }
+    if let Some(v) = svalue[0]
+        && v.is_finite()
+    {
+        evalue[0] = v;
     }
 
     Ok(evalue)
