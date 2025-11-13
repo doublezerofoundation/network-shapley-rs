@@ -11,6 +11,142 @@ Rust implementation to match Python [network-shapley](https://github.com/doublez
 - Rust (stable, tested with 1.87.0)
 - [Just](https://github.com/casey/just) (alternative to `make`)
 
+## Local Development
+
+### Install Dependencies
+
+1. Install Rust (if not already installed):
+
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
+
+2. Install Just command runner:
+
+   ```bash
+   # macOS
+   brew install just
+
+   # Linux
+   cargo install just
+
+   # Or see: https://github.com/casey/just#installation
+   ```
+
+### Build the Project
+
+```bash
+# Development build (all features)
+just build
+
+# Release build (optimized)
+just build-release
+```
+
+### Run Tests
+
+```bash
+# Run all tests with nextest (all features)
+just test
+
+# Run tests with standard cargo
+cargo test
+
+# Run a specific test
+cargo test <test_name>
+```
+
+### Code Quality
+
+```bash
+# Check formatting
+just fmt
+
+# Run clippy lints
+just clippy
+
+# Run full CI pipeline (fmt + build + clippy + test)
+just ci
+```
+
+## Usage
+
+Here's a simple example showing how to compute Shapley values for network operators:
+
+```rust
+use network_shapley::{
+    error::Result,
+    shapley::ShapleyInput,
+    types::{Demand, Device, PrivateLink, PublicLink},
+};
+
+fn main() -> Result<()> {
+    // Define private links (operator-owned connections)
+    let private_links = vec![
+        PrivateLink::new("SIN1".to_string(), "FRA1".to_string(), 50.0, 10.0, 1.0, None),
+        PrivateLink::new("FRA1".to_string(), "AMS1".to_string(), 3.0, 10.0, 1.0, None),
+        PrivateLink::new("FRA1".to_string(), "LON1".to_string(), 5.0, 10.0, 1.0, None),
+    ];
+
+    // Define devices (network nodes) and their operators
+    let devices = vec![
+        Device::new("SIN1".to_string(), 1, "Alpha".to_string()),
+        Device::new("FRA1".to_string(), 1, "Alpha".to_string()),
+        Device::new("AMS1".to_string(), 1, "Beta".to_string()),
+        Device::new("LON1".to_string(), 1, "Beta".to_string()),
+    ];
+
+    // Define public links (available to all operators)
+    let public_links = vec![
+        PublicLink::new("SIN".to_string(), "FRA".to_string(), 100.0),
+        PublicLink::new("SIN".to_string(), "AMS".to_string(), 102.0),
+        PublicLink::new("FRA".to_string(), "LON".to_string(), 7.0),
+        PublicLink::new("FRA".to_string(), "AMS".to_string(), 5.0),
+    ];
+
+    // Define network demands (traffic requests)
+    let demands = vec![
+        Demand::new("SIN".to_string(), "AMS".to_string(), 1, 1.0, 1.0, 1, true),
+        Demand::new("SIN".to_string(), "LON".to_string(), 5, 1.0, 2.0, 1, true),
+        Demand::new("AMS".to_string(), "LON".to_string(), 2, 3.0, 1.0, 2, false),
+        Demand::new("AMS".to_string(), "FRA".to_string(), 1, 3.0, 1.0, 2, false),
+    ];
+
+    // Create input with configuration parameters
+    let input = ShapleyInput {
+        private_links,
+        devices,
+        demands,
+        public_links,
+        operator_uptime: 0.98,
+        contiguity_bonus: 5.0,
+        demand_multiplier: 1.0,
+    };
+
+    // Compute Shapley values
+    let result = input.compute()?;
+    println!("{:?}", result);
+
+    Ok(())
+}
+```
+
+Run the example:
+
+```bash
+cargo run --example simple --features serde
+```
+
+Expected output:
+
+```
+ operator | value              | proportion
+ Alpha    | 173.67559751778526 | 0.6701709231265766
+ Beta     | 85.47560036995537  | 0.3298290768734235
+```
+
+The Shapley values represent each operator's contribution to the network's capacity to satisfy demands.
+
 ## Development
 
 ```bash
