@@ -13,14 +13,16 @@
 //!     --operator "OperatorName"
 //! ```
 
+use std::{fs::File, io, path::PathBuf, process::ExitCode};
+
 use clap::Parser;
+use tabled::{Table, settings::Style};
+
 use network_shapley::{
     error::{Result, ShapleyError},
     link_estimate::LinkEstimateInput,
     types::{Demands, Devices, PrivateLinks, PublicLinks},
 };
-use std::{fs::File, path::PathBuf, process::ExitCode};
-use tabled::{Table, settings::Style};
 
 #[derive(Parser, Debug)]
 #[command(name = "link-estimate")]
@@ -118,13 +120,13 @@ fn run(args: Args) -> Result<()> {
     // Output
     match args.format.as_str() {
         "csv" => {
-            println!("device1,device2,bandwidth,latency,value,percent");
+            let mut wtr = csv::Writer::from_writer(io::stdout());
             for lv in &result {
-                println!(
-                    "{},{},{},{},{},{}",
-                    lv.device1, lv.device2, lv.bandwidth, lv.latency, lv.value, lv.percent
-                );
+                wtr.serialize(lv)
+                    .map_err(|e| ShapleyError::Validation(format!("Failed to write CSV: {}", e)))?;
             }
+            wtr.flush()
+                .map_err(|e| ShapleyError::Validation(format!("Failed to flush CSV: {}", e)))?;
         }
         "json" => {
             let json = serde_json::to_string_pretty(&result).map_err(|e| {
