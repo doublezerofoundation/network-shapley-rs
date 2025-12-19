@@ -1,5 +1,6 @@
 pub(crate) mod consolidation;
 pub mod error;
+pub mod link_estimate;
 pub(crate) mod lp_builder;
 pub(crate) mod multicast;
 pub mod shapley;

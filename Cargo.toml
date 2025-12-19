@@ -9,11 +9,14 @@ name = "simple"
 name = "csv_demand1"
 [[example]]
 name = "csv_demand2"
+[[example]]
+name = "link_estimate"
 
 [dependencies]
 clarabel = "0"
 faer = "0"
 rayon = "1"
+regex = "1"
 thiserror = "2"
 
 csv = { version = "1", optional = true }

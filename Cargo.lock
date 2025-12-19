@@ -856,6 +856,7 @@ dependencies = [
  "csv",
  "faer",
  "rayon",
+ "regex",
  "serde",
  "tabled",
  "thiserror 2.0.12",

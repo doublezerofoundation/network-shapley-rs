@@ -18,6 +18,10 @@ example-demand1:
 example-demand2:
     cargo run --example csv_demand2 --release --features serde
 
+# Run the link_estimate example
+example-link-estimate:
+    cargo run --example link_estimate --release --features serde
+
 # ---------------
 # Dev
 # ---------------
