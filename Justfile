@@ -23,6 +23,14 @@ example-link-estimate:
     cargo run --example link_estimate --release --features serde
 
 # ---------------
+# CLI
+# ---------------
+
+# Build link-estimate CLI binary
+build-cli:
+    cargo build --release --features cli
+
+# ---------------
 # Dev
 # ---------------
 
