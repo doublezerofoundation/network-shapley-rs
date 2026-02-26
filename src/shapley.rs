@@ -26,6 +26,7 @@ pub type Operator = String;
 pub type ShapleyOutput = BTreeMap<Operator, ShapleyValue>;
 
 /// Input parameters for Shapley computation
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug)]
 pub struct ShapleyInput {
     pub private_links: PrivateLinks,
