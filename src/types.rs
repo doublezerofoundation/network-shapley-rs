@@ -42,18 +42,53 @@ pub struct PrivateLink {
 }
 
 #[cfg(feature = "serde")]
-fn deser_shared<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+fn deser_shared<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
 where
     D: Deserializer<'de>,
-    T: std::str::FromStr,
-    T::Err: std::fmt::Display,
 {
-    let s = <String as serde::Deserialize>::deserialize(deserializer)?;
-    if s == "NA" || s.is_empty() {
-        Ok(None)
-    } else {
-        s.parse::<T>().map(Some).map_err(serde::de::Error::custom)
+    struct SharedVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for SharedVisitor {
+        type Value = Option<u32>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("null, an integer, or a string (\"NA\"/empty for None)")
+        }
+
+        fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D2: Deserializer<'de>>(self, d: D2) -> Result<Self::Value, D2::Error> {
+            d.deserialize_any(self)
+        }
+
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
+            u32::try_from(v)
+                .map(Some)
+                .map_err(|_| E::custom(format!("shared value {v} out of u32 range")))
+        }
+
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
+            u32::try_from(v)
+                .map(Some)
+                .map_err(|_| E::custom(format!("shared value {v} out of u32 range")))
+        }
+
+        fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Self::Value, E> {
+            if s == "NA" || s.is_empty() {
+                Ok(None)
+            } else {
+                s.parse::<u32>().map(Some).map_err(E::custom)
+            }
+        }
     }
+
+    deserializer.deserialize_any(SharedVisitor)
 }
 
 #[cfg(feature = "serde")]
@@ -61,14 +96,31 @@ fn deser_multicast<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let s = <String as serde::Deserialize>::deserialize(deserializer)?;
-    match s.to_lowercase().as_str() {
-        "true" => Ok(true),
-        "false" => Ok(false),
-        other => Err(serde::de::Error::custom(format!(
-            "invalid multicast boolean value: {other}",
-        ))),
+    struct MulticastVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for MulticastVisitor {
+        type Value = bool;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a boolean or a string (\"true\"/\"false\")")
+        }
+
+        fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
+            Ok(v)
+        }
+
+        fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Self::Value, E> {
+            match s.to_lowercase().as_str() {
+                "true" => Ok(true),
+                "false" => Ok(false),
+                other => Err(E::custom(format!(
+                    "invalid multicast boolean value: {other}",
+                ))),
+            }
+        }
     }
+
+    deserializer.deserialize_any(MulticastVisitor)
 }
 
 impl PrivateLink {
