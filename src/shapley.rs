@@ -2,12 +2,11 @@ use crate::{
     consolidation::{consolidate_demand, consolidate_links},
     error::{Result, ShapleyError},
     lp_builder::LpBuilderInput,
-    solver::create_coalition_solver,
+    solver::{SolveStatus, create_coalition_solver},
     types::{Demands, Devices, PrivateLinks, PublicLinks},
     utils::{factorial, generate_bitmap},
     validation::check_inputs,
 };
-use clarabel::solver::SolverStatus;
 use faer::prelude::*;
 use rayon::prelude::*;
 use std::{
@@ -179,10 +178,7 @@ impl Shapley {
                         // Solve and return the optimal value
                         match solver.solve() {
                             Ok(solution) => {
-                                if matches!(
-                                    solution.status,
-                                    SolverStatus::Solved | SolverStatus::AlmostSolved
-                                ) {
+                                if matches!(solution.status, SolveStatus::Solved) {
                                     let value = -solution.objective_value; // Negative because we minimize
                                     Some(value)
                                 } else {

@@ -11,15 +11,14 @@ name = "csv_demand1"
 name = "csv_demand2"
 
 [dependencies]
-clarabel = "0"
-faer = "0"
-rayon = "1"
-thiserror = "2"
-
-csv = { version = "1", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
 borsh = { version = "1", features = [ "derive" ] ,optional = true }
+csv = { version = "1", optional = true }
+faer = "0"
+microlp = "0.4"
+rayon = "1"
+serde = { version = "1", features = ["derive"], optional = true }
 tabled = { version = "0", optional = true, features = [ "std" ]}
+thiserror = "2"
 
 [dev-dependencies]
 csv = "1"
