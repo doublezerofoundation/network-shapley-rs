@@ -13,7 +13,6 @@ name = "csv_demand2"
 [dependencies]
 borsh = { version = "1", features = [ "derive" ] ,optional = true }
 csv = { version = "1", optional = true }
-faer = "0"
 microlp = "0.4"
 rayon = "1"
 serde = { version = "1", features = ["derive"], optional = true }

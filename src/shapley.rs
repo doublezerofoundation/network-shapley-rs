@@ -7,7 +7,6 @@ use crate::{
     utils::{factorial, generate_bitmap},
     validation::check_inputs,
 };
-use faer::prelude::*;
 use rayon::prelude::*;
 use std::{
     collections::BTreeMap,
@@ -228,81 +227,51 @@ impl Shapley {
     }
 }
 
-/// Compute expected values considering operator uptime
+/// Compute expected values considering operator uptime.
+///
+/// For each coalition S, computes:
+///   evalue[S] = Σ_{T⊆S} uptime^|T| × (1-uptime)^(|S\T|) × svalue[T]
+///
+/// Uses Gosper's subset iteration (`t = (t-1) & s`) for O(3^n) total work
+/// instead of O(4^n) dense matrix operations.
 fn compute_expected_values(
     svalue: &[Option<f64>],
     n_operators: usize,
     operator_uptime: f64,
 ) -> Result<Vec<f64>> {
     let n_coal = 1 << n_operators;
-    let uptime = operator_uptime;
+    let downtime = 1.0 - operator_uptime;
 
-    // Replace None with -inf
     let svalue_vec: Vec<f64> = svalue
         .iter()
         .map(|&v| v.unwrap_or(f64::NEG_INFINITY))
         .collect();
 
-    // Count coalition sizes
-    let size: Vec<usize> = (0..n_coal)
-        .map(|i| (i as u32).count_ones() as usize)
-        .collect();
-
-    // Base probabilities
-    let base_p: Vec<f64> = size.iter().map(|&s| uptime.powi(s as i32)).collect();
-
-    // Build submask: submask[i, j] = 1 if coalition j is a subset of coalition i and j <= i (lower triangle)
-    let submask = Mat::from_fn(n_coal, n_coal, |i, j| {
-        if (j & i) == j && j <= i { 1.0 } else { 0.0 }
-    });
-
-    // Build bp_masked = base_p as column vector broadcasted across, then masked
-    // Python: bp_masked = base_p * submask (broadcasts base_p across columns)
-    // NumPy broadcasts 1D arrays along the last axis (columns)
-    let mut bp_masked = Mat::zeros(n_coal, n_coal);
-    for i in 0..n_coal {
-        for j in 0..n_coal {
-            bp_masked[(i, j)] = base_p[j] * submask[(i, j)];
-        }
-    }
-
-    // Build coefficient matrix
-    let coef_vec = build_coefficient_matrix(n_operators);
-    let coef_dense = Mat::from_fn(n_coal, n_coal, |r, c| coef_vec[r][c] as f64);
-
-    // Python: term = bp_masked @ (coef_dense * submask)
-    // Use faer's zip! macro for element-wise multiplication
-    let mut coef_masked = Mat::zeros(n_coal, n_coal);
-    zip!(&mut coef_masked, &coef_dense, &submask).for_each(|unzip!(cm, cd, sm)| {
-        *cm = cd * sm;
-    });
-
-    let term = &bp_masked * &coef_masked; // Matrix multiplication
-
-    // Python: part = (bp_masked + term) * submask
-    // Use faer's zip! macro for element-wise operations
-    let mut part = Mat::zeros(n_coal, n_coal);
-    zip!(&mut part, &bp_masked, &term, &submask).for_each(|unzip!(p, bp, t, sm)| {
-        *p = (bp + t) * sm;
-    });
-
-    // Python: evalue = (svalue * part).sum(axis=1)
-    // This broadcasts svalue as a row vector element-wise with each row of part
-    // For row i: multiply [svalue[0], svalue[1], ..., svalue[n-1]] with [part[i,0], part[i,1], ..., part[i,n-1]]
-    // Then sum the products
     let mut evalue = vec![0.0; n_coal];
 
-    for i in 0..n_coal {
+    for (s, ev) in evalue.iter_mut().enumerate() {
+        let s_size = (s as u32).count_ones() as i32;
         let mut sum = 0.0;
-        for j in 0..n_coal {
-            if svalue_vec[j].is_finite() {
-                sum += svalue_vec[j] * part[(i, j)];
+
+        // Iterate over all subsets t of s (including empty set)
+        let mut t = s;
+        loop {
+            let val = svalue_vec[t];
+            if val.is_finite() {
+                let t_size = (t as u32).count_ones() as i32;
+                let prob = operator_uptime.powi(t_size) * downtime.powi(s_size - t_size);
+                sum += prob * val;
             }
+            if t == 0 {
+                break;
+            }
+            t = (t - 1) & s;
         }
-        evalue[i] = sum;
+
+        *ev = sum;
     }
 
-    // The Python implementation has a special case for the empty coalition's value
+    // Preserve empty coalition value
     if let Some(v) = svalue[0]
         && v.is_finite()
     {
@@ -310,49 +279,6 @@ fn compute_expected_values(
     }
 
     Ok(evalue)
-}
-
-/// Build coefficient matrix for expected value computation
-fn build_coefficient_matrix(n_operators: usize) -> Vec<Vec<i32>> {
-    let n_coalitions = 1 << n_operators;
-    let mut coef = vec![vec![0i32; n_coalitions]; n_coalitions];
-
-    // Initialize with 0 (Python starts with empty sparse matrix)
-    coef[0][0] = 0;
-
-    // Build recursively as in Python implementation
-    for op in 0..n_operators {
-        let size = 1 << op;
-        let _new_size = size * 2;
-
-        // Create new coefficient matrix
-        let mut new_coef = vec![vec![0i32; n_coalitions]; n_coalitions];
-
-        // Copy existing values
-        for i in 0..size {
-            for j in 0..size {
-                new_coef[i][j] = coef[i][j];
-            }
-        }
-
-        // Fill new quadrants
-        for i in 0..size {
-            for j in 0..size {
-                // Bottom-left: -coef - I
-                new_coef[size + i][j] = -coef[i][j];
-                if i == j {
-                    new_coef[size + i][j] -= 1;
-                }
-
-                // Bottom-right: coef
-                new_coef[size + i][size + j] = coef[i][j];
-            }
-        }
-
-        coef = new_coef;
-    }
-
-    coef
 }
 
 /// Compute Shapley values from coalition values
