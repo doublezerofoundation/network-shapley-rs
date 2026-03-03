@@ -1,8 +1,8 @@
 use crate::{
     error::{Result, ShapleyError},
+    sparse::CscMatrix,
     types::ConsolidatedLink,
 };
-use clarabel::algebra::CscMatrix;
 
 /// Build J1 matrix - all private links grouped by shared ID
 pub(crate) fn build_j1_matrix(

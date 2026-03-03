@@ -4,9 +4,9 @@ use crate::{
         build_j1_matrix, build_j2_matrix, compute_j1_minus_j2, extract_mcast_eligible_columns,
         hstack_matrices,
     },
+    sparse::CscMatrix,
     types::{ConsolidatedDemand, ConsolidatedLink},
 };
-use clarabel::algebra::CscMatrix;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 type Constraints = (CscMatrix<f64>, Vec<f64>, Vec<String>, Vec<String>);

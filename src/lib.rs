@@ -4,6 +4,7 @@ pub(crate) mod lp_builder;
 pub(crate) mod multicast;
 pub mod shapley;
 pub(crate) mod solver;
+pub(crate) mod sparse;
 pub mod types;
 pub(crate) mod utils;
 pub(crate) mod validation;

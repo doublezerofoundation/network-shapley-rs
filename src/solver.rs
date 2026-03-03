@@ -1,217 +1,88 @@
 use crate::{
     error::{Result, ShapleyError},
     lp_builder::LpPrimitives,
+    sparse::CscMatrix,
 };
-use clarabel::{
-    algebra::CscMatrix,
-    solver::{DefaultSettings, DefaultSolver, IPSolver, SolverStatus, SupportedConeT},
-};
+use microlp::{ComparisonOp, OptimizationDirection, Variable};
 
-/// Type alias for stacked constraints
-type StackedConstraints = (CscMatrix<f64>, Vec<f64>, Vec<SupportedConeT<f64>>);
+/// Solver termination status
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SolveStatus {
+    Solved,
+    Infeasible,
+}
 
-/// LP solver wrapper for Clarabel
+/// LP solver wrapper for microlp
 pub(crate) struct LpSolver {
-    solver: DefaultSolver<f64>,
+    problem: microlp::Problem,
 }
 
 /// Result of solving an LP
 #[derive(Debug)]
 pub(crate) struct LpSolution {
-    pub status: SolverStatus,
+    pub status: SolveStatus,
     pub objective_value: f64,
+}
+
+/// Collect all entries from a CSC matrix into row-oriented form.
+/// Returns a Vec indexed by row, each containing (col_index, value) pairs.
+fn rows_from_csc(matrix: &CscMatrix<f64>) -> Vec<Vec<(usize, f64)>> {
+    let mut rows: Vec<Vec<(usize, f64)>> = vec![Vec::new(); matrix.m];
+    for col in 0..matrix.n {
+        let start = matrix.colptr[col];
+        let end = matrix.colptr[col + 1];
+        for idx in start..end {
+            rows[matrix.rowval[idx]].push((col, matrix.nzval[idx]));
+        }
+    }
+    rows
 }
 
 impl LpSolver {
     /// Create a new LP solver from primitives
     pub(crate) fn new(primitives: &LpPrimitives) -> Result<Self> {
-        // Convert our LP to Clarabel's standard form:
-        // minimize    (1/2) x'Px + q'x
-        // subject to  Ax + s = b
-        //            s in K
-        //
-        // For LP, we have:
-        // - P = 0 (no quadratic term)
-        // - q = cost vector
-        // - Equality constraints: A_eq * x = b_eq
-        // - Inequality constraints: A_ub * x <= b_ub
-        //
-        // We need to combine into single A matrix and handle slack variables
+        let mut problem = microlp::Problem::new(OptimizationDirection::Minimize);
 
-        let n_vars = primitives.cost.len();
+        // Add variables with cost coefficients and non-negativity bounds
+        let vars: Vec<Variable> = primitives
+            .cost
+            .iter()
+            .map(|&c| problem.add_var(c, (0.0, f64::INFINITY)))
+            .collect();
 
-        // Create zero P matrix (no quadratic objective)
-        let p = CscMatrix::new(n_vars, n_vars, vec![0; n_vars + 1], vec![], vec![]);
+        // Add equality constraints (A_eq * x = b_eq)
+        let eq_rows = rows_from_csc(&primitives.a_eq);
+        for (row_idx, entries) in eq_rows.iter().enumerate() {
+            let terms: Vec<(Variable, f64)> =
+                entries.iter().map(|&(col, val)| (vars[col], val)).collect();
+            problem.add_constraint(&terms, ComparisonOp::Eq, primitives.b_eq[row_idx]);
+        }
 
-        // Cost vector
-        let q = primitives.cost.clone();
+        // Add inequality constraints (A_ub * x <= b_ub)
+        let ub_rows = rows_from_csc(&primitives.a_ub);
+        for (row_idx, entries) in ub_rows.iter().enumerate() {
+            let terms: Vec<(Variable, f64)> =
+                entries.iter().map(|&(col, val)| (vars[col], val)).collect();
+            problem.add_constraint(&terms, ComparisonOp::Le, primitives.b_ub[row_idx]);
+        }
 
-        // Stack equality and inequality constraints
-        let (a, b, cones) = stack_constraints(primitives)?;
-
-        // Configure solver settings
-        let settings = DefaultSettings::<f64> {
-            verbose: false,
-            max_iter: 10000,
-            tol_gap_abs: 1e-8,
-            tol_gap_rel: 1e-8,
-            tol_feas: 1e-8,
-            ..Default::default()
-        };
-
-        // Create solver
-        let solver = DefaultSolver::new(&p, &q, &a, &b, &cones, settings).map_err(|e| {
-            ShapleyError::LpSolver(format!("Failed to create Clarabel solver: {e}"))
-        })?;
-
-        Ok(Self { solver })
+        Ok(Self { problem })
     }
 
     /// Solve the LP problem
-    pub(crate) fn solve(mut self) -> Result<LpSolution> {
-        self.solver.solve();
-
-        let info = &self.solver.info;
-
-        // Check solver status
-        match info.status {
-            SolverStatus::Solved | SolverStatus::AlmostSolved => Ok(LpSolution {
-                status: info.status,
-                objective_value: info.cost_primal,
+    pub(crate) fn solve(self) -> Result<LpSolution> {
+        match self.problem.solve() {
+            Ok(solution) => Ok(LpSolution {
+                status: SolveStatus::Solved,
+                objective_value: solution.objective(),
             }),
-            SolverStatus::PrimalInfeasible | SolverStatus::AlmostPrimalInfeasible => Err(
-                ShapleyError::LpSolver("Problem is primal infeasible".to_string()),
-            ),
-            SolverStatus::DualInfeasible | SolverStatus::AlmostDualInfeasible => Err(
-                ShapleyError::LpSolver("Problem is dual infeasible (unbounded)".to_string()),
-            ),
-            SolverStatus::MaxIterations => Err(ShapleyError::LpSolver(
-                "Maximum iterations reached".to_string(),
-            )),
-            SolverStatus::MaxTime => Err(ShapleyError::LpSolver("Time limit reached".to_string())),
-            SolverStatus::NumericalError => Err(ShapleyError::LpSolver(
-                "Numerical error in solver".to_string(),
-            )),
-            SolverStatus::InsufficientProgress => Err(ShapleyError::LpSolver(
-                "Solver made insufficient progress".to_string(),
-            )),
-            _ => Err(ShapleyError::LpSolver(format!(
-                "Unexpected solver status: {status:?}",
-                status = info.status
-            ))),
+            Err(microlp::Error::Infeasible) => Ok(LpSolution {
+                status: SolveStatus::Infeasible,
+                objective_value: 0.0,
+            }),
+            Err(e) => Err(ShapleyError::LpSolver(format!("LP solver error: {e}"))),
         }
     }
-}
-
-/// Stack equality and inequality constraints for Clarabel format
-fn stack_constraints(primitives: &LpPrimitives) -> Result<StackedConstraints> {
-    let n_vars = primitives.cost.len();
-    let n_eq = primitives.a_eq.m;
-    let n_ineq = primitives.a_ub.m;
-    let n_nonneg = n_vars; // Add non-negativity constraints for all variables
-    let n_constraints = n_eq + n_ineq + n_nonneg;
-
-    // We need to stack A_eq, A_ub, and -I (for x >= 0) vertically
-    let mut triplets = Vec::new();
-
-    // Add equality constraint entries
-    for col in 0..primitives.a_eq.n {
-        let start = primitives.a_eq.colptr[col];
-        let end = primitives.a_eq.colptr[col + 1];
-
-        for idx in start..end {
-            let row = primitives.a_eq.rowval[idx];
-            let val = primitives.a_eq.nzval[idx];
-            triplets.push((row, col, val));
-        }
-    }
-
-    // Add inequality constraint entries (offset rows by n_eq)
-    for col in 0..primitives.a_ub.n {
-        let start = primitives.a_ub.colptr[col];
-        let end = primitives.a_ub.colptr[col + 1];
-
-        for idx in start..end {
-            let row = primitives.a_ub.rowval[idx] + n_eq;
-            let val = primitives.a_ub.nzval[idx];
-            triplets.push((row, col, val));
-        }
-    }
-
-    // Add non-negativity constraints: -I * x <= 0 (i.e., x >= 0)
-    let offset = n_eq + n_ineq;
-    for i in 0..n_vars {
-        triplets.push((offset + i, i, -1.0));
-    }
-
-    // Build combined constraint matrix
-    let a = build_csc_from_triplets(&triplets, n_constraints, n_vars)?;
-
-    // Stack b vectors
-    let mut b = Vec::with_capacity(n_constraints);
-    b.extend_from_slice(&primitives.b_eq);
-    b.extend_from_slice(&primitives.b_ub);
-    // Add zeros for non-negativity constraints
-    b.extend(vec![0.0; n_nonneg]);
-
-    // Define cones: equality constraints are ZeroCone, inequalities and non-negativity are NonnegativeCone
-    let mut cones = Vec::new();
-
-    if n_eq > 0 {
-        cones.push(SupportedConeT::ZeroConeT(n_eq));
-    }
-
-    if n_ineq + n_nonneg > 0 {
-        cones.push(SupportedConeT::NonnegativeConeT(n_ineq + n_nonneg));
-    }
-
-    Ok((a, b, cones))
-}
-
-/// Build CSC matrix from triplets (helper function)
-fn build_csc_from_triplets(
-    triplets: &[(usize, usize, f64)],
-    n_rows: usize,
-    n_cols: usize,
-) -> Result<CscMatrix<f64>> {
-    if triplets.is_empty() {
-        return Ok(CscMatrix::new(
-            n_rows,
-            n_cols,
-            vec![0; n_cols + 1],
-            vec![],
-            vec![],
-        ));
-    }
-
-    // Sort triplets by column, then row
-    let mut sorted_triplets = triplets.to_vec();
-    sorted_triplets.sort_by_key(|&(r, c, _)| (c, r));
-
-    let mut col_ptr = vec![0];
-    let mut row_ind = Vec::new();
-    let mut values = Vec::new();
-
-    let mut current_col = 0;
-
-    for &(row, col, val) in &sorted_triplets {
-        // Fill in empty columns
-        while current_col < col {
-            col_ptr.push(row_ind.len());
-            current_col += 1;
-        }
-
-        row_ind.push(row);
-        values.push(val);
-    }
-
-    // Fill remaining columns
-    while current_col < n_cols {
-        col_ptr.push(row_ind.len());
-        current_col += 1;
-    }
-
-    Ok(CscMatrix::new(n_rows, n_cols, col_ptr, row_ind, values))
 }
 
 /// Create LP solver for a specific coalition
