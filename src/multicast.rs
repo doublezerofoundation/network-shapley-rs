@@ -3,6 +3,7 @@ use crate::{
     sparse::CscMatrix,
     types::ConsolidatedLink,
 };
+use std::collections::HashMap;
 
 /// Build J1 matrix - all private links grouped by shared ID
 pub(crate) fn build_j1_matrix(
@@ -57,46 +58,29 @@ pub(crate) fn compute_j1_minus_j2(
         ));
     }
 
-    // Build triplets for the difference
-    let mut triplets = Vec::new();
+    // Accumulate entries in a HashMap for O(nnz) performance
+    let mut entries: HashMap<(usize, usize), f64> = HashMap::new();
 
     // Add J1 entries
     for col in 0..j1.n {
-        let start = j1.colptr[col];
-        let end = j1.colptr[col + 1];
-
-        for idx in start..end {
-            let row = j1.rowval[idx];
-            let val = j1.nzval[idx];
-            triplets.push((row, col, val));
+        for idx in j1.colptr[col]..j1.colptr[col + 1] {
+            *entries.entry((j1.rowval[idx], col)).or_default() += j1.nzval[idx];
         }
     }
 
     // Subtract J2 entries
     for col in 0..j2.n {
-        let start = j2.colptr[col];
-        let end = j2.colptr[col + 1];
-
-        for idx in start..end {
-            let row = j2.rowval[idx];
-            let val = j2.nzval[idx];
-            // Find if this (row, col) exists in triplets and subtract
-            let mut found = false;
-            for triplet in &mut triplets {
-                if triplet.0 == row && triplet.1 == col {
-                    triplet.2 -= val;
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                triplets.push((row, col, -val));
-            }
+        for idx in j2.colptr[col]..j2.colptr[col + 1] {
+            *entries.entry((j2.rowval[idx], col)).or_default() -= j2.nzval[idx];
         }
     }
 
-    // Remove zero entries
-    triplets.retain(|&(_, _, val)| val.abs() > 1e-10);
+    // Remove near-zero entries and convert to triplets
+    entries.retain(|_, v| v.abs() > 1e-10);
+    let triplets: Vec<(usize, usize, f64)> = entries
+        .into_iter()
+        .map(|((row, col), val)| (row, col, val))
+        .collect();
 
     build_csc_from_triplets(&triplets, j1.m, j1.n)
 }

@@ -39,31 +39,36 @@ fn rows_from_csc(matrix: &CscMatrix<f64>) -> Vec<Vec<(usize, f64)>> {
 }
 
 impl LpSolver {
-    /// Create a new LP solver from primitives
-    pub(crate) fn new(primitives: &LpPrimitives) -> Result<Self> {
+    /// Create a new LP solver from individual components
+    pub(crate) fn new(
+        cost: &[f64],
+        a_eq: &CscMatrix<f64>,
+        b_eq: &[f64],
+        a_ub: &CscMatrix<f64>,
+        b_ub: &[f64],
+    ) -> Result<Self> {
         let mut problem = microlp::Problem::new(OptimizationDirection::Minimize);
 
         // Add variables with cost coefficients and non-negativity bounds
-        let vars: Vec<Variable> = primitives
-            .cost
+        let vars: Vec<Variable> = cost
             .iter()
             .map(|&c| problem.add_var(c, (0.0, f64::INFINITY)))
             .collect();
 
         // Add equality constraints (A_eq * x = b_eq)
-        let eq_rows = rows_from_csc(&primitives.a_eq);
+        let eq_rows = rows_from_csc(a_eq);
         for (row_idx, entries) in eq_rows.iter().enumerate() {
             let terms: Vec<(Variable, f64)> =
                 entries.iter().map(|&(col, val)| (vars[col], val)).collect();
-            problem.add_constraint(&terms, ComparisonOp::Eq, primitives.b_eq[row_idx]);
+            problem.add_constraint(&terms, ComparisonOp::Eq, b_eq[row_idx]);
         }
 
         // Add inequality constraints (A_ub * x <= b_ub)
-        let ub_rows = rows_from_csc(&primitives.a_ub);
+        let ub_rows = rows_from_csc(a_ub);
         for (row_idx, entries) in ub_rows.iter().enumerate() {
             let terms: Vec<(Variable, f64)> =
                 entries.iter().map(|&(col, val)| (vars[col], val)).collect();
-            problem.add_constraint(&terms, ComparisonOp::Le, primitives.b_ub[row_idx]);
+            problem.add_constraint(&terms, ComparisonOp::Le, b_ub[row_idx]);
         }
 
         Ok(Self { problem })
@@ -85,29 +90,22 @@ impl LpSolver {
     }
 }
 
-/// Create LP solver for a specific coalition
+/// Create LP solver for a specific coalition using precomputed bitmasks.
+///
+/// `coalition_mask` has bit i set for each operator i in the coalition,
+/// plus `ALWAYS_BIT` so that Public/Private/empty operators always match.
 pub(crate) fn create_coalition_solver(
     primitives: &LpPrimitives,
-    _coalition_bitmap: u32,
-    col_op1: &[String],
-    coalition_operators: &[String],
+    coalition_mask: u32,
+    col_op1_mask: &[u32],
+    col_op2_mask: &[u32],
+    row_op1_mask: &[u32],
+    row_op2_mask: &[u32],
 ) -> Result<LpSolver> {
-    // Always include "Public" and "Private" operators
-    let always_included = ["Public", "Private"];
-
-    // Filter columns based on coalition membership
-    // A column is included if BOTH col_op1 AND col_op2 are in coalition (or always included)
-    let keep_cols: Vec<usize> = (0..col_op1.len())
+    // Filter columns: keep if BOTH operators match the coalition
+    let keep_cols: Vec<usize> = (0..col_op1_mask.len())
         .filter(|&i| {
-            let op1 = &primitives.col_op1[i];
-            let op2 = &primitives.col_op2[i];
-
-            let op1_included =
-                always_included.contains(&op1.as_str()) || coalition_operators.contains(op1);
-            let op2_included =
-                always_included.contains(&op2.as_str()) || coalition_operators.contains(op2);
-
-            op1_included && op2_included
+            (col_op1_mask[i] & coalition_mask) != 0 && (col_op2_mask[i] & coalition_mask) != 0
         })
         .collect();
 
@@ -117,30 +115,10 @@ pub(crate) fn create_coalition_solver(
         ));
     }
 
-    // Determine if this is the grand coalition (contains all operators)
-    // First, collect all unique operators from row_op1 and row_op2 (excluding empty, Public, Private)
-    let mut all_operators = std::collections::HashSet::new();
-    for op in primitives.row_op1.iter().chain(primitives.row_op2.iter()) {
-        if !op.is_empty() && op != "Public" && op != "Private" {
-            all_operators.insert(op.as_str());
-        }
-    }
-
-    // Filter rows for A_ub based on coalition membership
-    // A row is included if BOTH row_op1 AND row_op2 are in coalition (or always included)
-    let keep_rows: Vec<usize> = (0..primitives.row_op1.len())
+    // Filter rows for A_ub: keep if BOTH operators match the coalition
+    let keep_rows: Vec<usize> = (0..row_op1_mask.len())
         .filter(|&i| {
-            let op1 = &primitives.row_op1[i];
-            let op2 = &primitives.row_op2[i];
-
-            // Include constraints if both operators are in the coalition or if operators are empty (universal constraints)
-            let op1_included = op1.is_empty()
-                || always_included.contains(&op1.as_str())
-                || coalition_operators.contains(op1);
-            let op2_included = op2.is_empty()
-                || always_included.contains(&op2.as_str())
-                || coalition_operators.contains(op2);
-            op1_included && op2_included
+            (row_op1_mask[i] & coalition_mask) != 0 && (row_op2_mask[i] & coalition_mask) != 0
         })
         .collect();
 
@@ -162,32 +140,13 @@ pub(crate) fn create_coalition_solver(
         .copied()
         .collect();
 
-    // Create new primitives with filtered data
-    let filtered_primitives = LpPrimitives {
-        a_eq: a_eq_filtered,
-        a_ub: a_ub_filtered,
-        b_eq: primitives.b_eq.clone(),
-        b_ub: b_ub_filtered,
-        cost: cost_filtered,
-        row_op1: keep_rows
-            .iter()
-            .filter_map(|&i| primitives.row_op1.get(i).cloned())
-            .collect(),
-        row_op2: keep_rows
-            .iter()
-            .filter_map(|&i| primitives.row_op2.get(i).cloned())
-            .collect(),
-        col_op1: keep_cols
-            .iter()
-            .filter_map(|&i| primitives.col_op1.get(i).cloned())
-            .collect(),
-        col_op2: keep_cols
-            .iter()
-            .filter_map(|&i| primitives.col_op2.get(i).cloned())
-            .collect(),
-    };
-
-    LpSolver::new(&filtered_primitives)
+    LpSolver::new(
+        &cost_filtered,
+        &a_eq_filtered,
+        &primitives.b_eq,
+        &a_ub_filtered,
+        &b_ub_filtered,
+    )
 }
 
 /// Filter columns of a CSC matrix
@@ -307,7 +266,13 @@ mod tests {
         let primitives = lp_builder
             .build()
             .expect("LP builder should succeed in tests");
-        let solver = LpSolver::new(&primitives);
+        let solver = LpSolver::new(
+            &primitives.cost,
+            &primitives.a_eq,
+            &primitives.b_eq,
+            &primitives.a_ub,
+            &primitives.b_ub,
+        );
 
         assert!(solver.is_ok());
     }

@@ -3,20 +3,6 @@ pub(crate) fn has_digit(s: &str) -> bool {
     s.chars().any(|c| c.is_ascii_digit())
 }
 
-/// Generate a bitmap where column j is the binary representation of j
-pub(crate) fn generate_bitmap(n_bits: usize) -> Vec<Vec<u8>> {
-    let n_cols = 1 << n_bits;
-    let mut bitmap = vec![vec![0u8; n_cols]; n_bits];
-
-    for col in 0..n_cols {
-        for (row, row_bitmap) in bitmap.iter_mut().enumerate().take(n_bits) {
-            row_bitmap[col] = ((col >> row) & 1) as u8;
-        }
-    }
-
-    bitmap
-}
-
 /// Calculate factorial (cached for small values)
 pub(crate) const FACTORIAL_LIMIT: usize = 21;
 pub(crate) const FACTORIALS: [u64; FACTORIAL_LIMIT] = {

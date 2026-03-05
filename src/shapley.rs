@@ -4,12 +4,12 @@ use crate::{
     lp_builder::LpBuilderInput,
     solver::{SolveStatus, create_coalition_solver},
     types::{Demands, Devices, PrivateLinks, PublicLinks},
-    utils::{factorial, generate_bitmap},
+    utils::factorial,
     validation::check_inputs,
 };
 use rayon::prelude::*;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fmt::{Display, Formatter},
 };
 
@@ -18,6 +18,11 @@ use {
     serde::{Deserialize, Serialize},
     tabled::Tabled,
 };
+
+/// Sentinel bit for operators that are always included in every coalition
+/// (Public, Private, empty). Set in bit 31 so it never collides with
+/// operator index bits 0..19.
+const ALWAYS_BIT: u32 = 1 << 31;
 
 // For clarity
 pub type Operator = String;
@@ -149,30 +154,59 @@ impl Shapley {
         // Build LP primitives
         let primitives = LpBuilderInput::new(&full_map, &full_demand).build()?;
 
-        // Generate coalition bitmap
-        let bitmap = generate_bitmap(n_operators);
+        // Pre-compute operator bitmasks (once, before the parallel loop)
+        let op_index: HashMap<&str, u8> = operators
+            .iter()
+            .enumerate()
+            .map(|(i, op)| (op.as_str(), i as u8))
+            .collect();
+
+        let operator_mask = |op: &str| -> u32 {
+            if op == "Public" || op == "Private" || op.is_empty() {
+                ALWAYS_BIT
+            } else if let Some(&idx) = op_index.get(op) {
+                1u32 << idx
+            } else {
+                0
+            }
+        };
+
+        let col_op1_mask: Vec<u32> = primitives
+            .col_op1
+            .iter()
+            .map(|s| operator_mask(s))
+            .collect();
+        let col_op2_mask: Vec<u32> = primitives
+            .col_op2
+            .iter()
+            .map(|s| operator_mask(s))
+            .collect();
+        let row_op1_mask: Vec<u32> = primitives
+            .row_op1
+            .iter()
+            .map(|s| operator_mask(s))
+            .collect();
+        let row_op2_mask: Vec<u32> = primitives
+            .row_op2
+            .iter()
+            .map(|s| operator_mask(s))
+            .collect();
+
         let n_coalitions = 1 << n_operators;
 
         // Solve LP for each coalition
         let coalition_values: Vec<Option<f64>> = (0..n_coalitions)
             .into_par_iter()
             .map(|coalition_idx| {
-                // Check which operators are in this coalition
-                let mut coalition_operators = Vec::new();
-                for (op_idx, operator) in operators.iter().enumerate() {
-                    if (coalition_idx & (1 << op_idx)) != 0 {
-                        coalition_operators.push(operator.clone());
-                    }
-                }
-
-                // Create solver for this coalition
-                let coalition_bitmap = coalition_idx as u32;
+                let coalition_mask = (coalition_idx as u32) | ALWAYS_BIT;
 
                 match create_coalition_solver(
                     &primitives,
-                    coalition_bitmap,
-                    &primitives.col_op1,
-                    &coalition_operators,
+                    coalition_mask,
+                    &col_op1_mask,
+                    &col_op2_mask,
+                    &row_op1_mask,
+                    &row_op2_mask,
                 ) {
                     Ok(solver) => {
                         // Solve and return the optimal value
@@ -204,8 +238,7 @@ impl Shapley {
         };
 
         // Compute Shapley values
-        let shapley_values =
-            compute_shapley_values(&expected_values, &bitmap, n_operators, &operators);
+        let shapley_values = compute_shapley_values(&expected_values, n_operators);
 
         // Convert to output format
         let total_value: f64 = shapley_values.iter().map(|v| v.max(0.0)).sum();
@@ -283,24 +316,16 @@ fn compute_expected_values(
 }
 
 /// Compute Shapley values from coalition values
-fn compute_shapley_values(
-    coalition_values: &[f64],
-    bitmap: &[Vec<u8>],
-    n_operators: usize,
-    operators: &[String],
-) -> Vec<f64> {
+fn compute_shapley_values(coalition_values: &[f64], n_operators: usize) -> Vec<f64> {
     let mut shapley_values = vec![0.0; n_operators];
     let fact_n = factorial(n_operators);
 
-    for (k, _operator) in operators.iter().enumerate() {
+    for (k, sv) in shapley_values.iter_mut().enumerate() {
         let mut value = 0.0;
 
         // Find coalitions with this operator
-        for coalition_idx in 0..coalition_values.len() {
-            if bitmap[k][coalition_idx] == 1 {
-                // Coalition with operator
-                let with_value = coalition_values[coalition_idx];
-
+        for (coalition_idx, &with_value) in coalition_values.iter().enumerate() {
+            if (coalition_idx >> k) & 1 == 1 {
                 // Coalition without operator (remove bit k)
                 let without_idx = coalition_idx ^ (1 << k);
                 let without_value = coalition_values[without_idx];
@@ -317,7 +342,7 @@ fn compute_shapley_values(
             }
         }
 
-        shapley_values[k] = value;
+        *sv = value;
     }
 
     shapley_values
