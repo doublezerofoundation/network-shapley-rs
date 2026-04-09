@@ -301,10 +301,8 @@ mod tests {
         types::{ConsolidatedDemand, ConsolidatedLink},
     };
 
-    #[test]
-    fn test_solver_creation() {
-        // Create simple test data
-        let links = vec![ConsolidatedLink {
+    fn simple_links() -> Vec<ConsolidatedLink> {
+        vec![ConsolidatedLink {
             device1: "A".to_string(),
             device2: "B".to_string(),
             latency: 1.0,
@@ -313,9 +311,11 @@ mod tests {
             operator2: "Op1".to_string(),
             shared: 1,
             link_type: 0,
-        }];
+        }]
+    }
 
-        let demands = vec![ConsolidatedDemand {
+    fn simple_demands() -> Vec<ConsolidatedDemand> {
+        vec![ConsolidatedDemand {
             start: "A".to_string(),
             end: "B".to_string(),
             receivers: 1,
@@ -324,12 +324,15 @@ mod tests {
             kind: 1,
             multicast: false,
             original: 1,
-        }];
+        }]
+    }
 
+    #[test]
+    fn test_solver_creation() {
+        let links = simple_links();
+        let demands = simple_demands();
         let lp_builder = LpBuilderInput::new(&links, &demands);
-        let primitives = lp_builder
-            .build()
-            .expect("LP builder should succeed in tests");
+        let primitives = lp_builder.build().expect("LP builder should succeed");
         let solver = LpSolver::new(
             &primitives.cost,
             &primitives.a_eq,
@@ -337,7 +340,133 @@ mod tests {
             &primitives.a_ub,
             &primitives.b_ub,
         );
-
         assert!(solver.is_ok());
+    }
+
+    #[test]
+    fn test_rows_from_csc() {
+        // 2x3 matrix: [[1, 0, 2], [0, 3, 0]]
+        let matrix = CscMatrix::new(
+            2,
+            3,
+            vec![0, 1, 2, 3],    // colptr
+            vec![0, 1, 0],       // rowval
+            vec![1.0, 3.0, 2.0], // nzval
+        );
+        let rows = rows_from_csc(&matrix);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], vec![(0, 1.0), (2, 2.0)]); // row 0: col 0 = 1, col 2 = 2
+        assert_eq!(rows[1], vec![(1, 3.0)]); // row 1: col 1 = 3
+    }
+
+    #[test]
+    fn test_rows_from_csc_empty() {
+        let matrix = CscMatrix::new(3, 2, vec![0, 0, 0], vec![], vec![]);
+        let rows = rows_from_csc(&matrix);
+        assert_eq!(rows.len(), 3);
+        assert!(rows[0].is_empty());
+        assert!(rows[1].is_empty());
+        assert!(rows[2].is_empty());
+    }
+
+    #[test]
+    fn test_precomputed_rows() {
+        let links = simple_links();
+        let demands = simple_demands();
+        let lp_builder = LpBuilderInput::new(&links, &demands);
+        let primitives = lp_builder.build().expect("LP builder should succeed");
+        let precomputed = PrecomputedRows::new(&primitives);
+
+        // Should have rows matching the matrix dimensions
+        assert_eq!(precomputed.eq_rows.len(), primitives.a_eq.m);
+        assert_eq!(precomputed.ub_rows.len(), primitives.a_ub.m);
+    }
+
+    #[test]
+    fn test_coalition_buffers_new_and_reset() {
+        let mut buf = CoalitionBuffers::new(10);
+
+        assert_eq!(buf.col_remap.len(), 10);
+        assert!(buf.col_remap.iter().all(|&v| v == usize::MAX));
+        assert!(buf.cost.is_empty());
+
+        // Simulate use
+        buf.col_remap[0] = 0;
+        buf.col_remap[5] = 1;
+        buf.cost.push(1.0);
+        buf.cost.push(2.0);
+        buf.keep_rows.push(0);
+        buf.ops.push(ComparisonOp::Eq);
+        buf.rhs.push(5.0);
+
+        // Reset should clear everything
+        buf.reset();
+        assert!(buf.col_remap.iter().all(|&v| v == usize::MAX));
+        assert!(buf.cost.is_empty());
+        assert!(buf.keep_rows.is_empty());
+        assert!(buf.ops.is_empty());
+        assert!(buf.rhs.is_empty());
+
+        // Capacity should be preserved (no reallocation)
+        assert!(buf.cost.capacity() >= 10);
+    }
+
+    #[test]
+    fn test_solve_coalition_empty_columns() {
+        let links = simple_links();
+        let demands = simple_demands();
+        let lp_builder = LpBuilderInput::new(&links, &demands);
+        let primitives = lp_builder.build().expect("LP builder should succeed");
+        let precomputed = PrecomputedRows::new(&primitives);
+        let mut buffers = CoalitionBuffers::new(primitives.cost.len());
+
+        // Coalition mask 0 (no operators) — should fail with no columns
+        let col_masks = vec![0u32; primitives.cost.len()];
+        let row_masks = vec![0u32; primitives.b_ub.len()];
+
+        let result = solve_coalition(
+            &primitives,
+            &precomputed,
+            &mut buffers,
+            0, // empty coalition
+            &col_masks,
+            &col_masks,
+            &row_masks,
+            &row_masks,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_solve_coalition_grand_coalition() {
+        let links = simple_links();
+        let demands = simple_demands();
+        let lp_builder = LpBuilderInput::new(&links, &demands);
+        let primitives = lp_builder.build().expect("LP builder should succeed");
+        let precomputed = PrecomputedRows::new(&primitives);
+        let mut buffers = CoalitionBuffers::new(primitives.cost.len());
+
+        // All bits set — grand coalition, everything included
+        let all_bits = u32::MAX;
+        let col_masks = vec![all_bits; primitives.cost.len()];
+        let row_masks = vec![all_bits; primitives.b_ub.len()];
+
+        let result = solve_coalition(
+            &primitives,
+            &precomputed,
+            &mut buffers,
+            all_bits,
+            &col_masks,
+            &col_masks,
+            &row_masks,
+            &row_masks,
+        );
+
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert_eq!(result.status, SolveStatus::Solved);
+        // Objective should be finite and non-zero for a feasible problem
+        assert!(result.objective_value.is_finite());
     }
 }
