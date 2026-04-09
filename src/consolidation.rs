@@ -1,8 +1,9 @@
+use std::collections::{BTreeMap, HashMap, HashSet};
+
 use crate::{
     error::{Result, ShapleyError},
     types::{ConsolidatedDemand, ConsolidatedLink, Demands, Devices, PrivateLinks, PublicLinks},
 };
-use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Consolidate demand table for LP construction
 pub(crate) fn consolidate_demand(
@@ -195,8 +196,13 @@ pub(crate) fn consolidate_links(
             .get(link.device2.as_str())
             .unwrap_or(&"Unknown");
 
-        // Adjust bandwidth for uptime
-        let adjusted_bandwidth = link.bandwidth * link.uptime;
+        // Adjust bandwidth using quadratic uptime penalty curve.
+        // Maps raw uptime to effective availability — heavily penalizes below 98%:
+        //   100% → 1.0, 99% → ~0.66, 98% → ~0, <98% → 0
+        let uptime_factor = (-1578.9474 * link.uptime.powi(2) + 3176.3158 * link.uptime
+            - 1596.3684)
+            .clamp(0.0, 1.0);
+        let adjusted_bandwidth = link.bandwidth * uptime_factor;
 
         consolidated.push(ConsolidatedLink {
             device1: link.device1.clone(),

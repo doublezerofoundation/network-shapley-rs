@@ -1,9 +1,10 @@
+use std::fs::File;
+
 use network_shapley::{
     error::Result,
     shapley::{ShapleyInput, ShapleyOutput},
     types::{Demand, Demands, Device, Devices, PrivateLink, PrivateLinks, PublicLink, PublicLinks},
 };
-use std::fs::File;
 use tabled::{builder::Builder as TableBuilder, settings::Style};
 
 fn read_pvt_links(file_path: &str) -> Result<PrivateLinks> {

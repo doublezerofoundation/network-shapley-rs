@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, HashMap, HashSet};
+
 use crate::{
     error::{Result, ShapleyError},
     multicast::{
@@ -7,7 +9,6 @@ use crate::{
     sparse::CscMatrix,
     types::{ConsolidatedDemand, ConsolidatedLink},
 };
-use std::collections::{BTreeMap, HashMap, HashSet};
 
 type Constraints = (CscMatrix<f64>, Vec<f64>, Vec<String>, Vec<String>);
 

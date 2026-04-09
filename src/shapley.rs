@@ -1,22 +1,24 @@
-use crate::{
-    consolidation::{consolidate_demand, consolidate_links},
-    error::{Result, ShapleyError},
-    lp_builder::LpBuilderInput,
-    solver::{SolveStatus, create_coalition_solver},
-    types::{Demands, Devices, PrivateLinks, PublicLinks},
-    utils::factorial,
-    validation::check_inputs,
-};
-use rayon::prelude::*;
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, HashMap},
     fmt::{Display, Formatter},
 };
 
+use rayon::prelude::*;
 #[cfg(feature = "serde")]
 use {
     serde::{Deserialize, Serialize},
     tabled::Tabled,
+};
+
+use crate::{
+    consolidation::{consolidate_demand, consolidate_links},
+    error::{Result, ShapleyError},
+    lp_builder::LpBuilderInput,
+    solver::{CoalitionBuffers, PrecomputedRows, SolveStatus, solve_coalition},
+    types::{Demands, Devices, PrivateLinks, PublicLinks},
+    utils::factorial,
+    validation::check_inputs,
 };
 
 /// Sentinel bit for operators that are always included in every coalition
@@ -154,6 +156,9 @@ impl Shapley {
         // Build LP primitives
         let primitives = LpBuilderInput::new(&full_map, &full_demand).build()?;
 
+        // Pre-compute row-oriented constraint data (once, before the coalition loop)
+        let precomputed = PrecomputedRows::new(&primitives);
+
         // Pre-compute operator bitmasks (once, before the parallel loop)
         let op_index: HashMap<&str, u8> = operators
             .iter()
@@ -193,37 +198,42 @@ impl Shapley {
             .collect();
 
         let n_coalitions = 1 << n_operators;
+        let n_cols = col_op1_mask.len();
+
+        thread_local! {
+            static BUFFERS: RefCell<Option<CoalitionBuffers>> = const { RefCell::new(None) };
+        }
 
         // Solve LP for each coalition
         let coalition_values: Vec<Option<f64>> = (0..n_coalitions)
             .into_par_iter()
             .map(|coalition_idx| {
-                let coalition_mask = (coalition_idx as u32) | ALWAYS_BIT;
+                BUFFERS.with(|cell| {
+                    let mut borrow = cell.borrow_mut();
+                    let buf = borrow.get_or_insert_with(|| CoalitionBuffers::new(n_cols));
 
-                match create_coalition_solver(
-                    &primitives,
-                    coalition_mask,
-                    &col_op1_mask,
-                    &col_op2_mask,
-                    &row_op1_mask,
-                    &row_op2_mask,
-                ) {
-                    Ok(solver) => {
-                        // Solve and return the optimal value
-                        match solver.solve() {
-                            Ok(solution) => {
-                                if matches!(solution.status, SolveStatus::Solved) {
-                                    let value = -solution.objective_value; // Negative because we minimize
-                                    Some(value)
-                                } else {
-                                    None // Infeasible coalition
-                                }
+                    let coalition_mask = (coalition_idx as u32) | ALWAYS_BIT;
+
+                    match solve_coalition(
+                        &primitives,
+                        &precomputed,
+                        buf,
+                        coalition_mask,
+                        &col_op1_mask,
+                        &col_op2_mask,
+                        &row_op1_mask,
+                        &row_op2_mask,
+                    ) {
+                        Ok(result) => {
+                            if matches!(result.status, SolveStatus::Solved) {
+                                Some(-result.objective_value) // Negative because we minimize
+                            } else {
+                                None // Infeasible coalition
                             }
-                            Err(_) => None,
                         }
+                        Err(_) => None,
                     }
-                    Err(_) => None,
-                }
+                })
             })
             .collect();
 

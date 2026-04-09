@@ -1,9 +1,70 @@
+use microlp::{ComparisonOp, StopReason, VarDomain};
+#[cfg(test)]
+use microlp::{OptimizationDirection, Variable};
+use sprs::TriMatI;
+
 use crate::{
     error::{Result, ShapleyError},
     lp_builder::LpPrimitives,
     sparse::CscMatrix,
 };
-use microlp::{ComparisonOp, OptimizationDirection, Variable};
+
+/// Pre-computed row-oriented representation of the LP constraint matrices.
+/// Built once from the full primitives, then reused for every coalition.
+pub(crate) struct PrecomputedRows {
+    /// Equality constraint rows: each entry is (original_col_index, coefficient)
+    eq_rows: Vec<Vec<(usize, f64)>>,
+    /// Inequality constraint rows: each entry is (original_col_index, coefficient)
+    ub_rows: Vec<Vec<(usize, f64)>>,
+}
+
+impl PrecomputedRows {
+    /// Build from the full (unfiltered) LP primitives. Call once before the coalition loop.
+    pub(crate) fn new(primitives: &LpPrimitives) -> Self {
+        Self {
+            eq_rows: rows_from_csc(&primitives.a_eq),
+            ub_rows: rows_from_csc(&primitives.a_ub),
+        }
+    }
+}
+
+/// Reusable per-thread buffers for coalition LP construction.
+pub(crate) struct CoalitionBuffers {
+    pub col_remap: Vec<usize>,
+    pub cost: Vec<f64>,
+    pub keep_rows: Vec<usize>,
+    pub var_mins: Vec<f64>,
+    pub var_maxs: Vec<f64>,
+    pub var_domains: Vec<VarDomain>,
+    pub ops: Vec<ComparisonOp>,
+    pub rhs: Vec<f64>,
+}
+
+impl CoalitionBuffers {
+    pub fn new(n_cols: usize) -> Self {
+        Self {
+            col_remap: vec![usize::MAX; n_cols],
+            cost: Vec::with_capacity(n_cols),
+            keep_rows: Vec::with_capacity(256),
+            var_mins: Vec::with_capacity(n_cols),
+            var_maxs: Vec::with_capacity(n_cols),
+            var_domains: Vec::with_capacity(n_cols),
+            ops: Vec::with_capacity(1024),
+            rhs: Vec::with_capacity(1024),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.col_remap.fill(usize::MAX);
+        self.cost.clear();
+        self.keep_rows.clear();
+        self.var_mins.clear();
+        self.var_maxs.clear();
+        self.var_domains.clear();
+        self.ops.clear();
+        self.rhs.clear();
+    }
+}
 
 /// Solver termination status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,13 +73,16 @@ pub(crate) enum SolveStatus {
     Infeasible,
 }
 
-/// LP solver wrapper for microlp
+/// LP solver wrapper for microlp (used in tests)
+#[cfg(test)]
 pub(crate) struct LpSolver {
     problem: microlp::Problem,
 }
 
-/// Result of solving an LP
+/// Result of solving an LP (used in tests)
+#[cfg(test)]
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) struct LpSolution {
     pub status: SolveStatus,
     pub objective_value: f64,
@@ -38,6 +102,8 @@ fn rows_from_csc(matrix: &CscMatrix<f64>) -> Vec<Vec<(usize, f64)>> {
     rows
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 impl LpSolver {
     /// Create a new LP solver from individual components
     pub(crate) fn new(
@@ -90,152 +156,150 @@ impl LpSolver {
     }
 }
 
-/// Create LP solver for a specific coalition using precomputed bitmasks.
+/// Solve result from the coalition solver.
+pub(crate) struct CoalitionResult {
+    pub status: SolveStatus,
+    pub objective_value: f64,
+}
+
+/// Create and solve an LP for a specific coalition using pre-computed
+/// row-oriented constraint data. Avoids rebuilding CSC matrices per coalition.
 ///
 /// `coalition_mask` has bit i set for each operator i in the coalition,
 /// plus `ALWAYS_BIT` so that Public/Private/empty operators always match.
-pub(crate) fn create_coalition_solver(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn solve_coalition(
     primitives: &LpPrimitives,
+    precomputed: &PrecomputedRows,
+    buffers: &mut CoalitionBuffers,
     coalition_mask: u32,
     col_op1_mask: &[u32],
     col_op2_mask: &[u32],
     row_op1_mask: &[u32],
     row_op2_mask: &[u32],
-) -> Result<LpSolver> {
-    // Filter columns: keep if BOTH operators match the coalition
-    let keep_cols: Vec<usize> = (0..col_op1_mask.len())
-        .filter(|&i| {
-            (col_op1_mask[i] & coalition_mask) != 0 && (col_op2_mask[i] & coalition_mask) != 0
-        })
-        .collect();
+) -> Result<CoalitionResult> {
+    let n_cols = col_op1_mask.len();
 
-    if keep_cols.is_empty() {
+    buffers.reset();
+
+    // Ensure col_remap is large enough (may grow between calls if n_cols changes)
+    if buffers.col_remap.len() < n_cols {
+        buffers.col_remap.resize(n_cols, usize::MAX);
+    }
+
+    // Step 1: Compute keep_cols and build a remap array
+    let mut new_col = 0usize;
+
+    for i in 0..n_cols {
+        if (col_op1_mask[i] & coalition_mask) != 0 && (col_op2_mask[i] & coalition_mask) != 0 {
+            buffers.col_remap[i] = new_col;
+            buffers.cost.push(primitives.cost[i]);
+            new_col += 1;
+        }
+    }
+
+    if new_col == 0 {
         return Err(ShapleyError::MatrixConstructionError(
             "No columns selected for coalition".to_string(),
         ));
     }
 
-    // Filter rows for A_ub: keep if BOTH operators match the coalition
-    let keep_rows: Vec<usize> = (0..row_op1_mask.len())
-        .filter(|&i| {
-            (row_op1_mask[i] & coalition_mask) != 0 && (row_op2_mask[i] & coalition_mask) != 0
-        })
-        .collect();
-
-    // Filter constraint matrices
-    let a_eq_filtered = filter_columns(&primitives.a_eq, &keep_cols)?;
-    let a_ub_filtered = filter_rows_and_columns(&primitives.a_ub, &keep_rows, &keep_cols)?;
-
-    // Filter b_ub vector
-    let b_ub_filtered: Vec<f64> = keep_rows
-        .iter()
-        .filter_map(|&i| primitives.b_ub.get(i))
-        .copied()
-        .collect();
-
-    // Filter cost vector
-    let cost_filtered: Vec<f64> = keep_cols
-        .iter()
-        .filter_map(|&i| primitives.cost.get(i))
-        .copied()
-        .collect();
-
-    LpSolver::new(
-        &cost_filtered,
-        &a_eq_filtered,
-        &primitives.b_eq,
-        &a_ub_filtered,
-        &b_ub_filtered,
-    )
-}
-
-/// Filter columns of a CSC matrix
-fn filter_columns(matrix: &CscMatrix<f64>, keep: &[usize]) -> Result<CscMatrix<f64>> {
-    let mut col_ptr = vec![0];
-    let mut row_ind = Vec::new();
-    let mut values = Vec::new();
-
-    for &col in keep {
-        if col >= matrix.n {
-            return Err(ShapleyError::MatrixConstructionError(format!(
-                "Column index {col} out of bounds"
-            )));
-        }
-
-        let start = matrix.colptr[col];
-        let end = matrix.colptr[col + 1];
-
-        for idx in start..end {
-            row_ind.push(matrix.rowval[idx]);
-            values.push(matrix.nzval[idx]);
-        }
-
-        col_ptr.push(row_ind.len());
-    }
-
-    Ok(CscMatrix::new(
-        matrix.m,
-        keep.len(),
-        col_ptr,
-        row_ind,
-        values,
-    ))
-}
-
-/// Filter both rows and columns of a CSC matrix
-fn filter_rows_and_columns(
-    matrix: &CscMatrix<f64>,
-    keep_rows: &[usize],
-    keep_cols: &[usize],
-) -> Result<CscMatrix<f64>> {
-    // Create row mapping
-    let mut row_map = vec![None; matrix.m];
-    for (new_idx, &old_idx) in keep_rows.iter().enumerate() {
-        if old_idx < matrix.m {
-            row_map[old_idx] = Some(new_idx);
+    // Step 2: Compute keep_rows for A_ub
+    for i in 0..row_op1_mask.len() {
+        if (row_op1_mask[i] & coalition_mask) != 0 && (row_op2_mask[i] & coalition_mask) != 0 {
+            buffers.keep_rows.push(i);
         }
     }
 
-    let mut col_ptr = vec![0];
-    let mut row_ind = Vec::new();
-    let mut values = Vec::new();
+    let n_kept = new_col;
 
-    for &col in keep_cols {
-        if col >= matrix.n {
-            return Err(ShapleyError::MatrixConstructionError(format!(
-                "Column index {col} out of bounds"
-            )));
-        }
+    // Step 3: Build a single CSR constraint matrix via triplets, avoiding
+    // per-row CsVec allocations.
 
-        let start = matrix.colptr[col];
-        let end = matrix.colptr[col + 1];
+    let n_eq_rows = precomputed.eq_rows.len();
+    let n_ub_rows = buffers.keep_rows.len();
+    let n_total_rows = n_eq_rows + n_ub_rows;
 
-        for idx in start..end {
-            let row = matrix.rowval[idx];
-            // Only include if row is in keep_rows
-            if let Some(new_row) = row_map.get(row).and_then(|&r| r) {
-                row_ind.push(new_row);
-                values.push(matrix.nzval[idx]);
+    let mut triplets = TriMatI::<f64, usize>::new((n_total_rows, n_kept));
+    let mut row = 0;
+
+    // Equality constraints — all rows, remap columns
+    for (row_idx, entries) in precomputed.eq_rows.iter().enumerate() {
+        for &(old_col, val) in entries {
+            let nc = buffers.col_remap[old_col];
+            if nc != usize::MAX {
+                triplets.add_triplet(row, nc, val);
             }
         }
-
-        col_ptr.push(row_ind.len());
+        buffers.ops.push(ComparisonOp::Eq);
+        buffers.rhs.push(primitives.b_eq[row_idx]);
+        row += 1;
     }
 
-    Ok(CscMatrix::new(
-        keep_rows.len(),
-        keep_cols.len(),
-        col_ptr,
-        row_ind,
-        values,
-    ))
+    // Inequality constraints — only kept rows, remap columns
+    for keep_idx in 0..n_ub_rows {
+        let row_idx = buffers.keep_rows[keep_idx];
+        for &(old_col, val) in &precomputed.ub_rows[row_idx] {
+            let nc = buffers.col_remap[old_col];
+            if nc != usize::MAX {
+                triplets.add_triplet(row, nc, val);
+            }
+        }
+        buffers.ops.push(ComparisonOp::Le);
+        buffers.rhs.push(primitives.b_ub[row_idx]);
+        row += 1;
+    }
+
+    let constraint_matrix = triplets.to_csr();
+
+    // Build variable bounds and domains
+    buffers.var_mins.resize(n_kept, 0.0);
+    buffers.var_maxs.resize(n_kept, f64::INFINITY);
+    buffers.var_domains.resize(n_kept, VarDomain::Real);
+
+    // Solve using the vendored solver directly with pre-built CSR matrix
+    let solver_result = crate::simplex::solver::Solver::try_new_from_matrix(
+        &buffers.cost,
+        &buffers.var_mins,
+        &buffers.var_maxs,
+        constraint_matrix,
+        &buffers.ops,
+        &buffers.rhs,
+        &buffers.var_domains,
+        None,
+    );
+
+    match solver_result {
+        Ok(mut solver) => match solver.initial_solve() {
+            Ok(StopReason::Finished) => Ok(CoalitionResult {
+                status: SolveStatus::Solved,
+                objective_value: solver.cur_obj_val,
+            }),
+            Ok(StopReason::Limit) => Ok(CoalitionResult {
+                status: SolveStatus::Solved,
+                objective_value: solver.cur_obj_val,
+            }),
+            Err(microlp::Error::Infeasible) => Ok(CoalitionResult {
+                status: SolveStatus::Infeasible,
+                objective_value: 0.0,
+            }),
+            Err(e) => Err(ShapleyError::LpSolver(format!("LP solver error: {e}"))),
+        },
+        Err(microlp::Error::Infeasible) => Ok(CoalitionResult {
+            status: SolveStatus::Infeasible,
+            objective_value: 0.0,
+        }),
+        Err(e) => Err(ShapleyError::LpSolver(format!("LP solver error: {e}"))),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lp_builder::LpBuilderInput;
-    use crate::types::{ConsolidatedDemand, ConsolidatedLink};
+    use crate::{
+        lp_builder::LpBuilderInput,
+        types::{ConsolidatedDemand, ConsolidatedLink},
+    };
 
     #[test]
     fn test_solver_creation() {

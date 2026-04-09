@@ -1,9 +1,10 @@
-use network_shapley::shapley::{ShapleyInput, ShapleyValue};
-use serde::Serialize;
 use std::{
     io::{self, Read},
     process::ExitCode,
 };
+
+use network_shapley::shapley::{ShapleyInput, ShapleyValue};
+use serde::Serialize;
 
 #[derive(Serialize)]
 struct OperatorValue {
