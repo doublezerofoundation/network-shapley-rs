@@ -40,3 +40,4 @@ ignore:
   - "tests/"
   - "benches/"
   - "examples/"
+  - "src/simplex/"  # Vendored microlp solver internals — tested upstream

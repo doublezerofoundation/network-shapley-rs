@@ -1,9 +1,10 @@
+use std::collections::HashSet;
+
 use crate::{
     error::{Result, ShapleyError},
     types::{Demands, Devices, PrivateLinks, PublicLinks},
     utils::has_digit,
 };
-use std::collections::HashSet;
 
 /// Validate all inputs for network shapley computation
 pub(crate) fn check_inputs(

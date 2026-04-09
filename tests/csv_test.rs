@@ -1,9 +1,10 @@
+use std::fs::File;
+
 use network_shapley::{
     error::Result,
     shapley::{ShapleyInput, ShapleyOutput},
     types::{Demand, Demands, Device, Devices, PrivateLink, PrivateLinks, PublicLink, PublicLinks},
 };
-use std::fs::File;
 use tabled::{builder::Builder as TableBuilder, settings::Style};
 
 fn read_pvt_links(file_path: &str) -> Result<PrivateLinks> {
@@ -95,15 +96,15 @@ fn test_csv_demand1() {
         .to_string();
     println!("{table}");
 
-    // Expected values from Python output
-    assert_shapley_value(&result, "Alpha", 21.5370, 0.0208);
-    assert_shapley_value(&result, "Beta", 10.6595, 0.0103);
-    assert_shapley_value(&result, "Delta", 13.5257, 0.0131);
+    // Expected values (uptime penalty applied inside network-shapley-rs)
+    assert_shapley_value(&result, "Alpha", 20.7043, 0.0224);
+    assert_shapley_value(&result, "Beta", 10.6595, 0.0115);
+    assert_shapley_value(&result, "Delta", 13.4308, 0.0145);
     assert_shapley_value(&result, "Epsilon", 0.0407, 0.0000);
-    assert_shapley_value(&result, "Gamma", 487.1094, 0.4701);
-    assert_shapley_value(&result, "Kappa", 0.0603, 0.0001);
-    assert_shapley_value(&result, "Theta", 503.1153, 0.4855);
-    assert_shapley_value(&result, "Zeta", 0.1393, 0.0001);
+    assert_shapley_value(&result, "Gamma", 385.4550, 0.4164);
+    assert_shapley_value(&result, "Kappa", 0.0000, 0.0000);
+    assert_shapley_value(&result, "Theta", 495.3964, 0.5351);
+    assert_shapley_value(&result, "Zeta", 0.0445, 0.0000);
 }
 
 #[test]
@@ -130,13 +131,13 @@ fn test_csv_demand2() {
         .to_string();
     println!("{table}");
 
-    // Expected values from Python output
-    assert_shapley_value(&result, "Alpha", 2.0154, 0.0016);
-    assert_shapley_value(&result, "Beta", 187.1198, 0.1501);
-    assert_shapley_value(&result, "Delta", 111.6727, 0.0895);
-    assert_shapley_value(&result, "Epsilon", 88.5022, 0.0709);
-    assert_shapley_value(&result, "Gamma", 23.0343, 0.0184);
-    assert_shapley_value(&result, "Kappa", 10.6421, 0.0085);
-    assert_shapley_value(&result, "Theta", 333.5522, 0.2675);
-    assert_shapley_value(&result, "Zeta", 490.0349, 0.3931);
+    // Expected values (uptime penalty applied inside network-shapley-rs)
+    assert_shapley_value(&result, "Alpha", 2.3309, 0.0019);
+    assert_shapley_value(&result, "Beta", 168.2600, 0.1353);
+    assert_shapley_value(&result, "Delta", 109.1948, 0.0878);
+    assert_shapley_value(&result, "Epsilon", 96.5958, 0.0777);
+    assert_shapley_value(&result, "Gamma", 24.3389, 0.0196);
+    assert_shapley_value(&result, "Kappa", 10.6422, 0.0086);
+    assert_shapley_value(&result, "Theta", 333.2760, 0.2680);
+    assert_shapley_value(&result, "Zeta", 498.7059, 0.4011);
 }
