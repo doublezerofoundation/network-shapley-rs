@@ -4,6 +4,10 @@ use sprs::{CsMat, CsVec};
 
 use super::helpers::to_dense;
 
+/// A simple sparse vector stored as parallel `(index, value)` arrays.
+///
+/// Used throughout the simplex solver for intermediate results like
+/// column coefficients and pivot row data.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SparseVec {
     indices: Vec<usize>,
@@ -42,10 +46,20 @@ impl SparseVec {
     }
 }
 
+/// A dense-storage vector that also tracks which indices are non-zero.
+///
+/// Think of it as a dense `Vec<f64>` paired with a sparse index set.
+/// This gives O(1) random access (like a dense vec) while still allowing
+/// efficient iteration over only the non-zero entries (like a sparse vec).
+/// The simplex solver uses this as a working buffer during solve/transpose
+/// operations where both random access and sparse iteration are needed.
 #[derive(Clone, Debug)]
 pub struct ScatteredVec {
+    /// Dense storage — every index has a slot, most are 0.0.
     pub(crate) values: Vec<f64>,
+    /// Tracks which indices hold non-zero values.
     pub(crate) is_nonzero: Vec<bool>,
+    /// The indices that are currently non-zero (for sparse iteration).
     pub(crate) nonzero: Vec<usize>,
 }
 
@@ -125,12 +139,22 @@ impl ScatteredVec {
     }
 }
 
-/// Unordered sparse matrix with elements stored by columns
+/// Sparse matrix in compressed sparse column (CSC) format.
+///
+/// Elements are grouped by column. `indptr[c]..indptr[c+1]` gives the
+/// range in `indices`/`data` that belongs to column `c`. Within a column,
+/// entries may appear in any order (hence "unordered").
+///
+/// Columns are built incrementally: call [`push`] to add entries to the
+/// current column, then [`seal_column`] to finalize it and start the next.
 #[derive(Clone, Debug)]
 pub(crate) struct SparseMat {
     n_rows: usize,
+    /// Column pointers — `indptr[c]` is the start offset for column `c`.
     indptr: Vec<usize>,
+    /// Row indices of non-zero entries.
     indices: Vec<usize>,
+    /// Values of non-zero entries (parallel to `indices`).
     data: Vec<f64>,
 }
 
@@ -262,10 +286,17 @@ impl SparseMat {
     }
 }
 
+/// A triangular matrix (lower or upper), split into diagonal and off-diagonal parts.
+///
+/// Used to represent the L and U factors from LU decomposition.
+/// Storing the diagonal separately allows the solver to handle the common
+/// case where L has an implicit unit diagonal (all 1's) without wasting space.
 #[derive(Clone)]
 pub(crate) struct TriangleMat {
+    /// Off-diagonal entries, stored column-wise.
     pub(crate) nondiag: SparseMat,
-    /// Diag elements, None means all 1's
+    /// Diagonal elements. `None` means an implicit unit diagonal (all 1's),
+    /// which is the standard convention for the L factor.
     pub(crate) diag: Option<Vec<f64>>,
 }
 
@@ -297,14 +328,21 @@ impl std::fmt::Debug for TriangleMat {
     }
 }
 
+/// A permutation of row or column indices, stored as both the forward
+/// and inverse mappings so either direction is O(1).
 #[derive(Clone, Debug)]
 pub struct Perm {
+    /// Maps original index → permuted index.
     pub(crate) orig2new: Vec<usize>,
+    /// Maps permuted index → original index.
     pub(crate) new2orig: Vec<usize>,
 }
 
+/// Errors that can occur within the simplex solver's linear algebra layer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
+    /// The basis matrix is singular — typically means the LP is degenerate
+    /// or malformed in a way that prevents factorisation.
     SingularMatrix,
 }
 impl Display for Error {

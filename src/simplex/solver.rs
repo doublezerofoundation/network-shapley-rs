@@ -11,10 +11,15 @@ use super::{
 };
 
 pub(crate) type CsVec = sprs::CsVecI<f64, usize>;
+/// Optional wall-clock deadline — if `Some`, the solver periodically checks
+/// whether the deadline has passed and returns `StopReason::Limit` if so.
 pub(crate) type Deadline = Option<Instant>;
 
 type CsMat = sprs::CsMatI<f64, usize>;
 
+/// Tolerances for floating-point comparisons. Values closer than `EPS` are
+/// considered equal. This avoids infinite cycling in the simplex algorithm
+/// caused by tiny rounding differences.
 pub(crate) const MACHINE_EPS: f64 = f64::EPSILON * 10.0;
 pub const EPS: f64 = if MACHINE_EPS > 1e-8 {
     MACHINE_EPS
@@ -39,60 +44,107 @@ fn check_deadline(deadline: &Deadline) -> StopReason {
     StopReason::Finished
 }
 
+/// Revised simplex method solver for linear programs of the form:
+///
+/// ```text
+///   minimise   c^T x
+///   subject to A x {≤, ≥, =} b
+///              lb ≤ x ≤ ub
+/// ```
+///
+/// The simplex method works by maintaining a "basis" — a subset of variables
+/// whose values are determined by the constraints (the rest sit at their
+/// bounds). Each iteration ("pivot") swaps one variable into the basis and
+/// one out, improving the objective until optimality is reached.
+///
+/// This solver supports both the **primal** simplex (used when the current
+/// solution is feasible but not optimal) and the **dual** simplex (used to
+/// restore feasibility after adding a constraint).
 #[derive(Clone)]
 pub(crate) struct Solver {
+    /// Number of original (non-slack) decision variables.
     pub(crate) num_vars: usize,
     pub(crate) deadline: Deadline,
 
+    // ── Problem data (immutable after construction) ──────────────────────
+    /// Objective function coefficients for all variables (original + slack).
     orig_obj_coeffs: Vec<f64>,
+    /// Lower bounds for all variables.
     orig_var_mins: Vec<f64>,
+    /// Upper bounds for all variables.
     orig_var_maxs: Vec<f64>,
     pub(crate) orig_var_domains: Vec<VarDomain>,
-    orig_constraints: CsMat, // excluding rhs
+    /// Constraint matrix in CSR format (rows = constraints, columns = all vars including slack).
+    orig_constraints: CsMat,
+    /// Same matrix in CSC format (for efficient column access during pivots).
     orig_constraints_csc: CsMat,
+    /// Right-hand side of each constraint.
     orig_rhs: Vec<f64>,
 
+    // ── Algorithm control ────────────────────────────────────────────────
+    /// Steepest-edge pricing: improves pivot selection at the cost of
+    /// maintaining squared norms. Generally makes the solver converge in
+    /// fewer iterations.
     enable_primal_steepest_edge: bool,
     enable_dual_steepest_edge: bool,
 
+    /// Feasibility flags — these determine which phase of the simplex
+    /// method is active (restore feasibility vs. optimise).
     is_primal_feasible: bool,
     is_dual_feasible: bool,
 
-    // Updated on each pivot
-    /// For each var: whether it is basic/non-basic and the corresponding index.
+    // ── Basis state (updated on each pivot) ──────────────────────────────
+    /// For each variable: whether it is basic or non-basic, and its index
+    /// within the corresponding array.
     var_states: Vec<VarState>,
+    /// LU factorisation of the current basis matrix, used to solve
+    /// `B * x = b` and `B^T * y = c` at each pivot.
     basis_solver: BasisSolver,
 
-    /// For each constraint the corresponding basic var.
+    /// For each constraint (row), the variable currently in the basis.
     basic_vars: Vec<usize>,
+    /// Current values of the basic variables.
     basic_var_vals: Vec<f64>,
     basic_var_mins: Vec<f64>,
     basic_var_maxs: Vec<f64>,
+    /// Squared norms for dual steepest-edge pricing.
     dual_edge_sq_norms: Vec<f64>,
 
-    /// Remaining variables. (idx -> var), 'nb' means 'non-basic'
+    /// Non-basic variables (the ones sitting at a bound). 'nb' = non-basic.
     nb_vars: Vec<usize>,
+    /// Reduced costs of the non-basic variables (how much the objective
+    /// improves per unit increase of each non-basic variable).
     nb_var_obj_coeffs: Vec<f64>,
     nb_var_vals: Vec<f64>,
     nb_var_states: Vec<NonBasicVarState>,
     nb_var_is_fixed: Vec<bool>,
+    /// Squared norms for primal steepest-edge pricing.
     primal_edge_sq_norms: Vec<f64>,
 
+    /// Current objective function value.
     pub(crate) cur_obj_val: f64,
 
-    // Recomputed on each pivot
+    // ── Scratch space (recomputed on each pivot) ─────────────────────────
+    /// Column of the basis-inverse times the entering variable's constraint column.
     col_coeffs: SparseVec,
     sq_norms_update_helper: Vec<f64>,
     inv_basis_row_coeffs: SparseVec,
+    /// Row of reduced costs for the leaving variable's constraint row.
     row_coeffs: ScatteredVec,
 }
 
+/// Tracks whether a variable is currently in the basis or not, and its
+/// index within the `basic_vars` or `nb_vars` array respectively.
 #[derive(Clone, Debug)]
 enum VarState {
+    /// In the basis — the `usize` is the index into `basic_vars` / `basic_var_vals`.
     Basic(usize),
+    /// Not in the basis — the `usize` is the index into `nb_vars` / `nb_var_vals`.
     NonBasic(usize),
 }
 
+/// For a non-basic variable, records whether it is currently sitting at
+/// its lower bound, upper bound, or neither (free variable).
 #[derive(Clone, Debug)]
 struct NonBasicVarState {
     at_min: bool,
@@ -692,6 +744,9 @@ impl Solver {
         self.num_vars + self.num_constraints()
     }
 
+    /// Run the full solve: first restore primal feasibility (dual simplex),
+    /// then optimise the objective (primal simplex). This is the main entry
+    /// point after constructing a Solver.
     pub(crate) fn initial_solve(&mut self) -> Result<StopReason, Error> {
         if check_deadline(&self.deadline) == StopReason::Limit {
             return Ok(StopReason::Limit);
@@ -713,6 +768,9 @@ impl Solver {
         Ok(StopReason::Finished)
     }
 
+    /// Primal simplex loop: repeatedly pick the best entering variable
+    /// (choose_pivot) and perform the basis exchange (pivot) until no
+    /// improving variable remains, meaning we've reached the optimum.
     fn optimize(&mut self) -> Result<StopReason, Error> {
         for iter in 0.. {
             if iter % 1000 == 0 {
@@ -732,6 +790,11 @@ impl Solver {
         Ok(StopReason::Finished)
     }
 
+    /// Dual simplex loop: used when the current solution is infeasible
+    /// (some basic variable violates its bounds). Each iteration picks the
+    /// most infeasible row (choose_pivot_row_dual), finds a compatible
+    /// entering column (choose_entering_col_dual), and pivots to reduce
+    /// infeasibility until all bounds are satisfied.
     fn restore_feasibility(&mut self) -> Result<StopReason, Error> {
         for iter in 0.. {
             if iter % 1000 == 0 {
@@ -754,6 +817,9 @@ impl Solver {
         Ok(StopReason::Finished)
     }
 
+    /// Add a new constraint to an already-solved LP and re-solve.
+    /// The new constraint gets a slack variable and enters the basis.
+    /// If adding it makes the solution infeasible, dual simplex restores feasibility.
     pub(crate) fn add_constraint(
         &mut self,
         mut coeffs: CsVec,
@@ -900,6 +966,18 @@ impl Solver {
         }
     }
 
+    /// Primal simplex pivot selection.
+    ///
+    /// 1. **Pick the entering variable**: the non-basic variable with the
+    ///    best reduced cost (using steepest-edge pricing if enabled).
+    /// 2. **Compute the pivot column**: solve `B * col = a_j` to get the
+    ///    representation of the entering column in the current basis.
+    /// 3. **Pick the leaving variable** (ratio test with Harris rule):
+    ///    find the basic variable that hits its bound first as the entering
+    ///    variable increases. The Harris rule adds a small tolerance to
+    ///    avoid degenerate pivots.
+    ///
+    /// Returns `None` when all reduced costs are non-improving → optimal.
     fn choose_pivot(&mut self) -> Result<Option<PivotInfo>, Error> {
         let entering_c = {
             let filtered_obj_coeffs = self
@@ -1034,6 +1112,8 @@ impl Solver {
         }
     }
 
+    /// Dual simplex: pick the leaving row — the basic variable with the
+    /// worst bound violation (weighted by steepest-edge norm if enabled).
     fn choose_pivot_row_dual(&self) -> Option<(usize, f64)> {
         let infeasibilities = self
             .basic_var_vals
@@ -1087,6 +1167,10 @@ impl Solver {
         })
     }
 
+    /// Dual simplex: given the leaving row, pick the entering column.
+    /// Uses the dual ratio test (with Harris rule) to find the non-basic
+    /// variable that maintains dual feasibility while allowing the leaving
+    /// variable to reach its bound.
     fn choose_entering_col_dual(
         &self,
         row: usize,
@@ -1176,6 +1260,13 @@ impl Solver {
         }
     }
 
+    /// Execute a basis exchange: swap the entering variable into the basis
+    /// and the leaving variable out. This updates all solver state:
+    /// - basic/non-basic variable values and bounds
+    /// - reduced costs (objective coefficients)
+    /// - steepest-edge norms (if enabled)
+    /// - the LU factorisation (either by appending an eta matrix or
+    ///   refactoring from scratch when eta fill-in gets too large)
     fn pivot(&mut self, pivot_info: &PivotInfo) -> Result<(), Error> {
         self.cur_obj_val += self.nb_var_obj_coeffs[pivot_info.col] * pivot_info.entering_diff;
 
@@ -1256,6 +1347,8 @@ impl Solver {
         Ok(())
     }
 
+    /// Incrementally update the squared steepest-edge norms for primal pricing
+    /// after a pivot. This avoids recomputing them from scratch each iteration.
     fn update_primal_sq_norms(&mut self, entering_col: usize, pivot_coeff: f64) {
         let tmp = self.basis_solver.solve_transp(self.col_coeffs.iter());
 
@@ -1291,6 +1384,7 @@ impl Solver {
         }
     }
 
+    /// Incrementally update the squared steepest-edge norms for dual pricing.
     fn update_dual_sq_norms(&mut self, leaving_row: usize, pivot_coeff: f64) {
         let tau = self.basis_solver.solve(self.inv_basis_row_coeffs.iter());
 
@@ -1333,6 +1427,10 @@ impl Solver {
         Ok(())
     }
 
+    /// Recompute the reduced costs of all non-basic variables from scratch.
+    /// Called when switching from the artificial objective (phase I) to
+    /// the real objective (phase II), or when accumulated rounding makes
+    /// incremental updates unreliable.
     fn recalc_obj_coeffs(&mut self) -> Result<(), Error> {
         if self.basis_solver.eta_matrices.len() > 0 {
             self.basis_solver
@@ -1369,32 +1467,53 @@ impl Solver {
     }
 }
 
+/// Everything needed to perform a single pivot operation.
 #[derive(Debug)]
 struct PivotInfo {
+    /// Non-basic index of the entering variable.
     col: usize,
+    /// Value the entering variable will take after the pivot.
     entering_new_val: f64,
+    /// Change in the entering variable's value (new - old).
     entering_diff: f64,
+    /// `None` when the entering variable simply moves to its other bound
+    /// without swapping with a basic variable (a "bound flip").
     elem: Option<PivotElem>,
 }
 
+/// Details of the basis exchange when a variable actually leaves the basis.
 #[derive(Debug)]
 struct PivotElem {
+    /// Constraint row of the leaving basic variable.
     row: usize,
+    /// The pivot element: coefficient of the entering variable in this row.
     coeff: f64,
+    /// Value the leaving variable will sit at after leaving the basis.
     leaving_new_val: f64,
 }
 
-/// Stuff related to inversion of the basis matrix
+/// Maintains the LU factorisation of the current basis matrix `B` and
+/// provides `solve(rhs)` → `B^{-1} * rhs` and `solve_transp(rhs)` → `B^{-T} * rhs`.
+///
+/// After each pivot, instead of refactoring from scratch, we append an
+/// "eta matrix" — a rank-1 correction that captures the basis change.
+/// When the accumulated eta matrices get too large (more non-zeros than
+/// the LU factors themselves), we refactor from scratch.
 #[derive(Clone)]
 struct BasisSolver {
     lu_factors: LUFactors,
+    /// Transposed LU factors, for solving `B^T * y = c` (needed for
+    /// reduced cost computation and steepest-edge updates).
     lu_factors_transp: LUFactors,
     scratch: ScratchSpace,
+    /// Accumulated rank-1 corrections since the last full refactorisation.
     eta_matrices: EtaMatrices,
+    /// Reusable working buffer for solve operations.
     rhs: ScatteredVec,
 }
 
 impl BasisSolver {
+    /// Record a rank-1 basis update instead of refactoring the full LU.
     fn push_eta_matrix(&mut self, col_coeffs: &SparseVec, r_leaving: usize, pivot_coeff: f64) {
         let coeffs = col_coeffs.iter().map(|(r, &coeff)| {
             let val = if r == r_leaving {
@@ -1407,6 +1526,8 @@ impl BasisSolver {
         self.eta_matrices.push(r_leaving, coeffs);
     }
 
+    /// Full LU refactorisation of the current basis matrix from scratch.
+    /// Called when eta fill-in exceeds the base LU size.
     fn reset(&mut self, orig_constraints_csc: &CsMat, basic_vars: &[usize]) -> Result<(), Error> {
         self.scratch.clear_sparse(basic_vars.len());
         self.eta_matrices.clear_and_resize(basic_vars.len());
@@ -1427,6 +1548,8 @@ impl BasisSolver {
         Ok(())
     }
 
+    /// Solve `B * x = rhs` where B is the current basis matrix.
+    /// First applies the base LU, then applies each accumulated eta correction.
     fn solve<'a>(&mut self, rhs: impl Iterator<Item = (usize, &'a f64)>) -> &ScatteredVec {
         self.rhs.set(rhs);
         self.lu_factors.solve(&mut self.rhs, &mut self.scratch);
@@ -1442,6 +1565,8 @@ impl BasisSolver {
         &mut self.rhs
     }
 
+    /// Solve `B^T * y = rhs` (the transpose system).
+    /// Eta corrections are applied in reverse order, then the transposed LU solve runs.
     fn solve_transp<'a>(&mut self, rhs: impl Iterator<Item = (usize, &'a f64)>) -> &ScatteredVec {
         self.rhs.set(rhs);
         for idx in (0..self.eta_matrices.len()).rev() {
@@ -1459,9 +1584,15 @@ impl BasisSolver {
     }
 }
 
+/// A sequence of eta (rank-1 update) matrices that accumulate between full
+/// LU refactorisations. Each eta matrix records one basis change: which row
+/// left and what coefficients changed. Applying them in order after the base
+/// LU solve gives the correct result for the current basis.
 #[derive(Clone, Debug)]
 struct EtaMatrices {
+    /// Which row left the basis in each successive pivot.
     leaving_rows: Vec<usize>,
+    /// The update coefficients for each pivot, stored column-wise.
     coeff_cols: SparseMat,
 }
 
@@ -1488,6 +1619,8 @@ impl EtaMatrices {
     }
 }
 
+/// Consume a sparse vector and return one truncated/extended to `len` dimensions.
+/// Entries with index >= len are dropped.
 fn into_resized(vec: CsVec, len: usize) -> CsVec {
     let (mut indices, mut data) = vec.into_raw_storage();
 

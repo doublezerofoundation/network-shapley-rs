@@ -1,6 +1,10 @@
 use super::sparse::Perm;
 
-/// Simplest preordering: order columns based on their size
+/// Pre-order columns by ascending number of non-zeros (sparsest first).
+///
+/// This heuristic reduces fill-in during LU factorisation — processing
+/// sparser columns first tends to produce sparser L and U factors.
+/// Returns a [`Perm`] mapping between original and reordered column indices.
 pub fn order_simple<'a>(size: usize, get_col: impl Fn(usize) -> &'a [usize]) -> Perm {
     let mut cols_queue = ColsQueue::new(size);
     for c in 0..size {
@@ -24,11 +28,20 @@ pub fn order_simple<'a>(size: usize, get_col: impl Fn(usize) -> &'a [usize]) -> 
     Perm { orig2new, new2orig }
 }
 
+/// A priority queue of columns keyed by their "score" (non-zero count).
+///
+/// Implemented as an array of circular doubly-linked lists — one list per
+/// score value. `pop_min()` returns the column with the smallest score,
+/// which is the sparsest column. This is efficient because scores are
+/// small non-negative integers bounded by the matrix dimension.
 #[derive(Debug)]
 struct ColsQueue {
+    /// Head pointer for each score bucket (None = empty bucket).
     score2head: Vec<Option<usize>>,
+    /// Prev/next pointers forming circular doubly-linked lists within each bucket.
     prev: Vec<usize>,
     next: Vec<usize>,
+    /// Smallest score that has any columns in it (avoids scanning empty buckets).
     min_score: usize,
     len: usize,
 }

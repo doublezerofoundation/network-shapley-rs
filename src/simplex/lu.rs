@@ -5,14 +5,25 @@ use super::{
     sparse::{Error, Perm, ScatteredVec, SparseMat, TriangleMat},
 };
 
+/// LU decomposition of a square matrix: `P_row * A * P_col = L * U`.
+///
+/// The basis matrix (the columns of the constraint matrix corresponding to
+/// the current basic variables) is factored into lower-triangular `L` and
+/// upper-triangular `U`, with optional row and column permutations for
+/// numerical stability and sparsity. This factorisation is the core of
+/// the simplex method — every pivot requires solving linear systems
+/// `B * x = b`, which becomes `L * U * x = P * b`.
 #[derive(Clone)]
 pub struct LUFactors {
     lower: TriangleMat,
     upper: TriangleMat,
+    /// Row permutation applied before the LU solve (for pivot stability).
     row_perm: Option<Perm>,
+    /// Column permutation applied after the LU solve (for sparsity).
     col_perm: Option<Perm>,
 }
 
+/// Pre-allocated working buffers reused across LU solves to avoid repeated allocation.
 #[derive(Clone, Debug)]
 pub struct ScratchSpace {
     rhs: ScatteredVec,
@@ -58,6 +69,8 @@ impl LUFactors {
         self.lower.nondiag.nnz() + self.upper.nondiag.nnz() + self.lower.cols()
     }
 
+    /// Solve `A * x = rhs` for `x`, overwriting `rhs` with the solution.
+    /// Uses the dense path (forward-substitute through L, back-substitute through U).
     pub fn solve_dense(&self, rhs: &mut [f64], scratch: &mut ScratchSpace) {
         scratch.dense_rhs.resize(rhs.len(), 0.0);
 
@@ -81,6 +94,8 @@ impl LUFactors {
         }
     }
 
+    /// Solve `A * x = rhs` for `x`, overwriting `rhs` with the solution.
+    /// Uses the sparse path — only touches non-zero entries for efficiency.
     pub fn solve(&self, rhs: &mut ScatteredVec, scratch: &mut ScratchSpace) {
         if let Some(row_perm) = &self.row_perm {
             scratch.rhs.clear();
@@ -120,6 +135,14 @@ impl LUFactors {
     }
 }
 
+/// Compute the LU factorisation of a square matrix given column-wise access.
+///
+/// `get_col(c)` returns `(row_indices, values)` for column `c`.
+/// `stability_coeff` controls the threshold for partial pivoting — a pivot
+/// candidate must be at least `stability_coeff * max_abs` to be eligible,
+/// which trades fill-in for numerical accuracy (0.1 is a typical value).
+///
+/// Returns `Err(SingularMatrix)` if the matrix is (numerically) singular.
 pub fn lu_factorize<'a>(
     size: usize,
     get_col: impl Fn(usize) -> (&'a [usize], &'a [f64]),
@@ -258,11 +281,19 @@ pub fn lu_factorize<'a>(
     Ok(res)
 }
 
+/// Determines which entries in the solution will be non-zero *before*
+/// doing the actual arithmetic, by running a depth-first search on
+/// the dependency graph of the triangular matrix.
+///
+/// This is a standard optimisation for sparse triangular solves — by
+/// knowing the non-zero pattern up front, we only compute values we
+/// actually need.
 #[derive(Clone, Debug)]
 struct MarkNonzero {
     dfs_stack: Vec<DfsStep>,
     is_visited: Vec<bool>,
-    visited: Vec<usize>, // in reverse topological order
+    /// Indices in reverse topological order (the order we need to process them).
+    visited: Vec<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -361,11 +392,14 @@ impl MarkNonzero {
     }
 }
 
+/// Which triangle of the matrix we're solving against.
 enum Triangle {
     Lower,
     Upper,
 }
 
+/// Triangular solve against a dense right-hand side.
+/// Lower: forward substitution (columns 0..n). Upper: back substitution (columns n..0).
 fn tri_solve_dense(tri_mat: &TriangleMat, triangle: Triangle, rhs: &mut [f64]) {
     assert_eq!(tri_mat.rows(), rhs.len());
     match triangle {
@@ -402,6 +436,8 @@ fn tri_solve_sparse(tri_mat: &TriangleMat, scratch: &mut ScratchSpace) {
     }
 }
 
+/// Process one column during triangular substitution: divide by the diagonal
+/// (if present), then subtract contributions from all off-diagonal entries.
 fn tri_solve_process_col(tri_mat: &TriangleMat, col: usize, rhs: &mut [f64]) {
     let x_val = if let Some(diag) = tri_mat.diag.as_ref() {
         rhs[col] / diag[col]
