@@ -1,8 +1,7 @@
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Deserializer, Serialize};
-
 #[cfg(feature = "borsh")]
 use borsh::{BorshDeserialize, BorshSerialize};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Deserializer, Serialize};
 
 pub type Demands = Vec<Demand>;
 pub type Devices = Vec<Device>;

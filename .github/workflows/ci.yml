@@ -38,7 +38,20 @@ jobs:
       - name: Setup | Just
         uses: taiki-e/install-action@just
 
+      - name: Setup | Python (for parity test)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup | Python deps
+        run: pip install pandas scipy
+
+      - name: Setup | Clone Python reference implementation
+        run: git clone https://github.com/doublezerofoundation/network-shapley.git ../network-shapley-py
+
       - name: Test | CI Pipeline
+        env:
+          NETWORK_SHAPLEY_PY_PATH: ../network-shapley-py
         run: just ci
 
       - name: Coverage | Collect coverage data

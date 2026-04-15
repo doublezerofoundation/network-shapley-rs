@@ -1,9 +1,10 @@
+use std::collections::HashMap;
+
 use crate::{
     error::{Result, ShapleyError},
     sparse::CscMatrix,
     types::ConsolidatedLink,
 };
-use std::collections::HashMap;
 
 /// Build J1 matrix - all private links grouped by shared ID
 pub(crate) fn build_j1_matrix(

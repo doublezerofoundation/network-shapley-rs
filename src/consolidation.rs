@@ -1,8 +1,9 @@
+use std::collections::{BTreeMap, HashMap, HashSet};
+
 use crate::{
     error::{Result, ShapleyError},
     types::{ConsolidatedDemand, ConsolidatedLink, Demands, Devices, PrivateLinks, PublicLinks},
 };
-use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Consolidate demand table for LP construction
 pub(crate) fn consolidate_demand(
@@ -195,8 +196,13 @@ pub(crate) fn consolidate_links(
             .get(link.device2.as_str())
             .unwrap_or(&"Unknown");
 
-        // Adjust bandwidth for uptime
-        let adjusted_bandwidth = link.bandwidth * link.uptime;
+        // Adjust bandwidth using quadratic uptime penalty curve.
+        // Maps raw uptime to effective availability — heavily penalizes below 98%:
+        //   100% → 1.0, 99% → ~0.66, 98% → ~0, <98% → 0
+        let uptime_factor = (-1578.9474 * link.uptime.powi(2) + 3176.3158 * link.uptime
+            - 1596.3684)
+            .clamp(0.0, 1.0);
+        let adjusted_bandwidth = link.bandwidth * uptime_factor;
 
         consolidated.push(ConsolidatedLink {
             device1: link.device1.clone(),
@@ -535,5 +541,89 @@ mod tests {
         let unique_multicast_types: std::collections::HashSet<_> =
             multicast_types.iter().cloned().collect();
         assert_eq!(unique_multicast_types.len(), multicast_types.len());
+    }
+
+    #[test]
+    fn test_uptime_penalty_perfect() {
+        // 100% uptime → factor = 1.0 (no penalty)
+        let factor =
+            (-1578.9474_f64 * 1.0_f64.powi(2) + 3176.3158 * 1.0 - 1596.3684).clamp(0.0, 1.0);
+        assert!((factor - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_uptime_penalty_99_percent() {
+        // 99% uptime → ~0.66
+        let factor =
+            (-1578.9474_f64 * 0.99_f64.powi(2) + 3176.3158 * 0.99 - 1596.3684).clamp(0.0, 1.0);
+        assert!(
+            factor > 0.6 && factor < 0.7,
+            "99% uptime should be ~0.66, got {factor}"
+        );
+    }
+
+    #[test]
+    fn test_uptime_penalty_98_percent_drops_to_zero() {
+        // 98% uptime → ~0 (threshold)
+        let factor =
+            (-1578.9474_f64 * 0.98_f64.powi(2) + 3176.3158 * 0.98 - 1596.3684).clamp(0.0, 1.0);
+        assert!(factor < 0.01, "98% uptime should be ~0, got {factor}");
+    }
+
+    #[test]
+    fn test_uptime_penalty_below_98_is_zero() {
+        for uptime in [0.97_f64, 0.95, 0.90, 0.50, 0.0] {
+            let factor =
+                (-1578.9474_f64 * uptime.powi(2) + 3176.3158 * uptime - 1596.3684).clamp(0.0, 1.0);
+            assert_eq!(
+                factor, 0.0,
+                "{uptime} uptime should clamp to 0, got {factor}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_uptime_penalty_applied_to_bandwidth() {
+        // Verify consolidate_links applies the penalty to bandwidth
+        // Device names must be 3+ chars (code slices [..3] for city prefix)
+        let private_links = vec![crate::types::PrivateLink::new(
+            "AAA1".to_string(),
+            "BBB1".to_string(),
+            10.0,
+            100.0,
+            0.99, // 99% uptime → ~66% bandwidth
+            Some(1),
+        )];
+        let devices = vec![
+            crate::types::Device::new("AAA1".to_string(), 10, "Op1".to_string()),
+            crate::types::Device::new("BBB1".to_string(), 10, "Op1".to_string()),
+        ];
+        let demands = vec![ConsolidatedDemand {
+            start: "A".to_string(),
+            end: "B".to_string(),
+            receivers: 1,
+            traffic: 1.0,
+            priority: 1.0,
+            kind: 1,
+            multicast: false,
+            original: 1,
+        }];
+        let public_links = vec![];
+
+        let result = consolidate_links(&private_links, &devices, &demands, &public_links, 5.0)
+            .expect("consolidate_links should succeed");
+
+        // Find the AAA1→BBB1 link (forward direction)
+        let ab_link = result
+            .iter()
+            .find(|l| l.device1 == "AAA1" && l.device2 == "BBB1");
+        assert!(ab_link.is_some(), "Should have AAA1→BBB1 link");
+
+        let bw = ab_link.unwrap().bandwidth;
+        // 100 * ~0.66 = ~66 (not 100 * 0.99 = 99)
+        assert!(
+            bw > 60.0 && bw < 70.0,
+            "Bandwidth should be ~66 (penalized), got {bw}"
+        );
     }
 }
